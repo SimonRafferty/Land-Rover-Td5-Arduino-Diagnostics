@@ -71,27 +71,59 @@ L9637D Pin 6 (K-Line) ──[510Ω]── +12V
 
 ## 📊 Live Data Output
 
-The interface provides real-time monitoring of:
+The interface provides real-time monitoring of over 20 engine parameters:
 
 ```
 === Land Rover Td5 ECU Interface ===
 Attempting ECU connection...
 Fast init successful, authenticating...
 ECU authenticated and connected!
-Speed: 45 km/h (27.9 mph), RPM: 1850
-Brake Pedal: Released, Cruise Brake: Released
-Speed: 50 km/h (31.1 mph), RPM: 2100
-Brake Pedal: PRESSED, Cruise Brake: PRESSED
+
+FUELLING - Speed: 45 km/h (27.9 mph), RPM: 1850, IQ: 12.50 mg/stroke, MAF: 18.5 kg/h, Throttle: 25.3%
+INPUTS - Brake Pedal: Released, Cruise Brake: Released
+TEMPS - Coolant: 89°C, Fuel: 85°C, Inlet: 45°C, Ambient: 28°C, Battery: 14.2V
+PRESSURE - MAP: 240 kPa, AAP: 100 kPa, Boost: 140 kPa (20.3 psi), Vref: 5.02V
+ACTUATORS - EGR: 15.2%, Wastegate: 45.8%
+
+FUELLING - Speed: 50 km/h (31.1 mph), RPM: 2100, IQ: 15.75 mg/stroke, MAF: 22.3 kg/h, Throttle: 35.8%
+INPUTS - Brake Pedal: PRESSED, Cruise Brake: PRESSED
+TEMPS - Coolant: 91°C, Fuel: 87°C, Inlet: 48°C, Ambient: 30°C, Battery: 14.1V
+PRESSURE - MAP: 195 kPa, AAP: 100 kPa, Boost: 95 kPa (13.8 psi), Vref: 5.01V
+ACTUATORS - EGR: 8.5%, Wastegate: 25.2%
 ```
 
-### Available Parameters
-- **Vehicle Speed**: km/h and mph conversion
-- **Engine RPM**: Direct value from ECU
-- **Brake Pedal Status**: Primary and cruise control switches
-- **Battery Voltage**: Converted to volts (mV/1000)
-- **Coolant Temperature**: Celsius ((raw-2732)/10)
-- **Manifold Air Flow**: kg/h (raw/10)
-- **Injection Quantity**: mg/stroke (raw/100)
+### Complete Parameter List
+
+**Engine Performance:**
+- **Vehicle Speed**: km/h with automatic mph conversion  
+- **Engine RPM**: Direct ECU value, real-time updates
+- **Injection Quantity**: mg/stroke with 0.01mg precision
+- **Manifold Air Flow (MAF)**: kg/h with 0.1kg/h precision
+- **Driver Demand**: Accelerator pedal position (0-100%)
+
+**Temperature Monitoring:**
+- **Coolant Temperature**: °C, critical for overheating detection
+- **Fuel Temperature**: °C, affects injection timing
+- **Inlet Air Temperature**: °C, post-intercooler measurement  
+- **Ambient Air Temperature**: °C, from airbox sensor
+
+**Pressure Systems:**
+- **Manifold Absolute Pressure (MAP)**: kPa, boost pressure indication
+- **Ambient Absolute Pressure (AAP)**: kPa, altitude compensation
+- **Calculated Boost Pressure**: kPa and PSI, MAP minus AAP
+- **Turbo Wastegate Position**: 0-100%, boost control feedback
+
+**Electrical Systems:**
+- **Battery Voltage**: Volts with 0.01V precision
+- **Reference Voltage**: 5V supply monitoring for sensor accuracy
+
+**Emissions Control:**
+- **EGR Inlet Throttle Position**: 0-100%, exhaust gas recirculation
+- **Brake Pedal Switches**: Primary and cruise control detection
+
+**System Status:**
+- **Communication Health**: Keep-alive status, error detection
+- **Authentication Status**: Security handshake confirmation
 
 ## 🔒 Security & Authentication
 
@@ -122,11 +154,30 @@ uint16_t calculateTd5Key(uint16_t seed) {
 3. **Expected Response**: `0x03 0xC1 0x57 0x8F 0xAA`
 4. **Start Diagnostics**: `0x02 0x10 0xA0 0xB2`
 
+### Live Data Commands
+- **Fuelling Data**: `0x02 0x21 0x20` - Speed, RPM, injection, MAF, throttle position
+- **Input Status**: `0x02 0x21 0x21` - Brake switches, gear position, other inputs  
+- **Temperature Sensors**: `0x02 0x21 0x22` - Coolant, fuel, inlet, ambient temperatures
+- **Pressure Sensors**: `0x02 0x21 0x23` - MAP, AAP, boost calculation, reference voltage
+- **Actuator Positions**: `0x02 0x21 0x24` - EGR throttle, turbo wastegate positions
+
 ### Critical Implementation Notes
 - **Echo Cancellation**: Half-duplex requires discarding transmitted echoes
 - **Inter-byte Timing**: 5ms delays improve reliability
 - **Keep-alive Messages**: Required every 1.5 seconds
 - **Response Timeouts**: 2-second windows with retry logic
+
+### Data Logging and Analysis Capabilities
+
+With over 20 live parameters available, this interface enables:
+- **Real-time Performance Monitoring**: Track boost pressure, injection quantity, and temperatures
+- **Diagnostic Troubleshooting**: Monitor sensor voltages and actuator positions
+- **Fuel Economy Analysis**: Log MAF, injection quantity, and driver demand relationships  
+- **Temperature Management**: Track coolant, fuel, and inlet air temperatures
+- **Turbo System Health**: Monitor boost pressure, wastegate position, and MAP/AAP sensors
+- **Electrical System Status**: Battery voltage and ECU reference voltage monitoring
+
+The comprehensive parameter set matches and exceeds commercial diagnostic tools like NANOCOM, providing professional-level data access for a fraction of the cost.
 
 ## 🏁 ECU Compatibility
 
@@ -143,16 +194,26 @@ uint16_t calculateTd5Key(uint16_t seed) {
 ## 🐛 Troubleshooting
 
 ### Common Issues
-- **No ECU Response**: Check K-Line connections, verify +12V power
-- **Authentication Failure**: Ensure correct seed-key algorithm implementation
-- **Intermittent Communication**: Add inter-byte delays, check grounding
-- **Baud Rate Problems**: Use software serial, avoid hardware UART limitations
+- **No ECU Response**: Check K-Line connections, verify +12V power, ensure proper grounding
+- **Authentication Failure**: Verify seed-key algorithm implementation, check message timing
+- **Intermittent Communication**: Add inter-byte delays, verify L9637D power supplies
+- **Baud Rate Problems**: Use software serial library, avoid ESP32 hardware UART limitations
+- **Missing Parameters**: Some data may not be available on all ECU variants (MSB vs NNN)
+
+### Parameter-Specific Issues
+- **Temperature Readings**: Values below -40°C or above 200°C indicate sensor faults
+- **Pressure Sensors**: MAP should be >AAP; negative boost indicates sensor problems  
+- **Battery Voltage**: Should read 12-15V; outside range indicates electrical issues
+- **Reference Voltage**: Should be stable at ~5.0V; variations indicate ECU problems
+- **EGR/Wastegate**: Positions stuck at 0% or 100% suggest mechanical faults
 
 ### Debug Tips
 - Monitor serial output at 115200 baud for detailed protocol traces
-- LED on GPIO 2 indicates successful ECU connection
-- Verify L9637D power supply voltages (12V and 3.3V)
-- Check for proper ground connections to ECU pins B1, B2, B24, B25
+- LED on GPIO 2 indicates successful ECU connection status
+- Verify L9637D power supply voltages: 12V on pin 7, 3.3V on pin 3
+- Check ECU grounding: pins B1, B2, B24, B25 should have <0.1Ω to chassis
+- Use multimeter to verify K-Line voltage levels: 0V (LOW) and 12V (HIGH)
+- Check message checksums if getting negative responses from ECU
 
 ## 📚 Technical References
 

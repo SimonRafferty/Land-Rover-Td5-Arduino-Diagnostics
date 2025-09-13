@@ -58,7 +58,19 @@ bool brakePedalPressed = false;
 bool cruiseBrakePressed = false;
 uint16_t engineRPM = 0;
 int16_t coolantTemp = 0;            // °C
+int16_t fuelTemp = 0;               // °C
+int16_t inletAirTemp = 0;           // °C
+int16_t ambientAirTemp = 0;         // °C
 uint16_t batteryVoltage = 0;        // mV
+uint16_t referenceVoltage = 0;      // mV
+uint16_t manifoldPressure = 0;      // kPa
+uint16_t ambientPressure = 0;       // kPa  
+uint16_t boostPressure = 0;         // kPa (calculated)
+uint16_t manifoldAirFlow = 0;       // kg/h * 10
+uint16_t injectionQuantity = 0;     // mg/stroke * 100
+uint16_t driverDemand = 0;          // % * 100
+uint16_t egrPosition = 0;           // % * 100
+uint16_t wastegatePosition = 0;     // % * 100
 
 void setup() {
   Serial.begin(115200);
@@ -248,7 +260,7 @@ void requestLiveData() {
   
   switch (requestType) {
     case 0:
-      // Request fuelling data (includes speed): 0x02 0x21 0x20 [checksum]
+      // Request fuelling data (includes speed, RPM, injection, MAF): 0x02 0x21 0x20 [checksum]
       {
         uint8_t fuellingRequest[] = {0x02, 0x21, 0x20, 0x00};
         fuellingRequest[3] = calculateChecksum(fuellingRequest, 3);
@@ -264,9 +276,36 @@ void requestLiveData() {
         sendMessage(inputRequest, 4);
       }
       break;
+      
+    case 2:
+      // Request temperature sensors: 0x02 0x21 0x22 [checksum]
+      {
+        uint8_t tempRequest[] = {0x02, 0x21, 0x22, 0x00};
+        tempRequest[3] = calculateChecksum(tempRequest, 3);
+        sendMessage(tempRequest, 4);
+      }
+      break;
+      
+    case 3:
+      // Request pressure sensors: 0x02 0x21 0x23 [checksum]  
+      {
+        uint8_t pressureRequest[] = {0x02, 0x21, 0x23, 0x00};
+        pressureRequest[3] = calculateChecksum(pressureRequest, 3);
+        sendMessage(pressureRequest, 4);
+      }
+      break;
+      
+    case 4:
+      // Request actuator positions: 0x02 0x21 0x24 [checksum]
+      {
+        uint8_t actuatorRequest[] = {0x02, 0x21, 0x24, 0x00};
+        actuatorRequest[3] = calculateChecksum(actuatorRequest, 3);
+        sendMessage(actuatorRequest, 4);
+      }
+      break;
   }
   
-  requestType = (requestType + 1) % 2;
+  requestType = (requestType + 1) % 5;
 }
 
 void processIncomingData() {
@@ -295,29 +334,104 @@ void processECUResponse(uint8_t* data, int length) {
   switch (service) {
     case 0x61:  // Positive response to data request
       if (subfunction == 0x20) {
-        // Fuelling data response (includes speed)
-        if (length >= 8) {
-          vehicleSpeed = (data[6] << 8) | data[7];  // Speed in km/h
-          engineRPM = (data[4] << 8) | data[5];     // RPM
+        // Fuelling data response (includes speed, RPM, injection, MAF)
+        if (length >= 20) {
+          // Parse fuelling parameters (based on EA2EGA research)
+          vehicleSpeed = (data[6] << 8) | data[7];      // Speed in km/h
+          engineRPM = (data[4] << 8) | data[5];         // RPM direct
+          injectionQuantity = (data[8] << 8) | data[9]; // Raw * 100 for mg/stroke
+          manifoldAirFlow = (data[10] << 8) | data[11]; // Raw * 10 for kg/h
+          driverDemand = (data[12] << 8) | data[13];    // Raw * 100 for %
           
-          Serial.print("Speed: ");
+          Serial.print("FUELLING - Speed: ");
           Serial.print(vehicleSpeed);
           Serial.print(" km/h (");
           Serial.print(vehicleSpeed * 0.621371, 1);
           Serial.print(" mph), RPM: ");
-          Serial.println(engineRPM);
+          Serial.print(engineRPM);
+          Serial.print(", IQ: ");
+          Serial.print(injectionQuantity / 100.0, 2);
+          Serial.print(" mg/stroke, MAF: ");
+          Serial.print(manifoldAirFlow / 10.0, 1);
+          Serial.print(" kg/h, Throttle: ");
+          Serial.print(driverDemand / 100.0, 1);
+          Serial.println("%");
         }
       } else if (subfunction == 0x21) {
-        // Input status response (brake switches)
+        // Input status response (brake switches and other inputs)
         if (length >= 4) {
           uint8_t inputByte = data[3];
           brakePedalPressed = (inputByte & 0x01) != 0;     // Bit 0
           cruiseBrakePressed = (inputByte & 0x02) == 0;    // Bit 1 (inverted)
           
-          Serial.print("Brake Pedal: ");
+          Serial.print("INPUTS - Brake Pedal: ");
           Serial.print(brakePedalPressed ? "PRESSED" : "Released");
           Serial.print(", Cruise Brake: ");
           Serial.println(cruiseBrakePressed ? "PRESSED" : "Released");
+        }
+      } else if (subfunction == 0x22) {
+        // Temperature sensors response
+        if (length >= 12) {
+          // Temperature conversions: (raw - 2732) / 10 for °C
+          coolantTemp = ((data[3] << 8) | data[4]);
+          coolantTemp = (coolantTemp - 2732) / 10;
+          
+          fuelTemp = ((data[5] << 8) | data[6]);
+          fuelTemp = (fuelTemp - 2732) / 10;
+          
+          inletAirTemp = ((data[7] << 8) | data[8]);
+          inletAirTemp = (inletAirTemp - 2732) / 10;
+          
+          ambientAirTemp = ((data[9] << 8) | data[10]);
+          ambientAirTemp = (ambientAirTemp - 2732) / 10;
+          
+          // Battery voltage: raw / 1000 for volts
+          batteryVoltage = (data[11] << 8) | data[12];
+          
+          Serial.print("TEMPS - Coolant: ");
+          Serial.print(coolantTemp);
+          Serial.print("°C, Fuel: ");
+          Serial.print(fuelTemp);
+          Serial.print("°C, Inlet: ");
+          Serial.print(inletAirTemp);
+          Serial.print("°C, Ambient: ");
+          Serial.print(ambientAirTemp);
+          Serial.print("°C, Battery: ");
+          Serial.print(batteryVoltage / 1000.0, 2);
+          Serial.println("V");
+        }
+      } else if (subfunction == 0x23) {
+        // Pressure sensors response
+        if (length >= 10) {
+          manifoldPressure = (data[3] << 8) | data[4];    // kPa
+          ambientPressure = (data[5] << 8) | data[6];     // kPa
+          boostPressure = manifoldPressure - ambientPressure; // Calculated boost
+          referenceVoltage = (data[7] << 8) | data[8];    // mV
+          
+          Serial.print("PRESSURE - MAP: ");
+          Serial.print(manifoldPressure);
+          Serial.print(" kPa, AAP: ");
+          Serial.print(ambientPressure);
+          Serial.print(" kPa, Boost: ");
+          Serial.print(boostPressure);
+          Serial.print(" kPa (");
+          Serial.print(boostPressure * 0.145038, 1); // Convert to PSI
+          Serial.print(" psi), Vref: ");
+          Serial.print(referenceVoltage / 1000.0, 2);
+          Serial.println("V");
+        }
+      } else if (subfunction == 0x24) {
+        // Actuator positions response
+        if (length >= 8) {
+          // EGR and Wastegate positions: raw * 100 for %
+          egrPosition = (data[3] << 8) | data[4];
+          wastegatePosition = (data[5] << 8) | data[6];
+          
+          Serial.print("ACTUATORS - EGR: ");
+          Serial.print(egrPosition / 100.0, 1);
+          Serial.print("%, Wastegate: ");
+          Serial.print(wastegatePosition / 100.0, 1);
+          Serial.println("%");
         }
       }
       break;
