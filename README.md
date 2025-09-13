@@ -1,6 +1,6 @@
-# Land Rover Td5 ECU Interface for ESP32
+# Land Rover Td5 ECU Interface for ESP32 (Arduino)
 
-A complete Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
+A complete ESP32 / Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
 
 ## 🚗 Overview
 
