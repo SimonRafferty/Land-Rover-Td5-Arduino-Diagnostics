@@ -238,11 +238,6 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **[LandyZone Td5 Communication Forum](https://www.landyzone.co.uk/land-rover/discovery-2-td5-cant-communicate.366647/)** - Troubleshooting discussions
 - **[Digital Kaos Td5 ECU Repair](https://www.digital-kaos.co.uk/forums/showthread.php/802599-Land-Rover-Defender-TD5-ECU-repair/page2)** - Hardware repair insights
 
-### Commercial Tools Reference
-- **[BlackBox Solutions SM010](https://blackbox-solutions.com/help/SM010.html)** - Professional Lucas Td5 diagnostic specifications
-- **[NANOCOM Diagnostics](https://www.nanocom-diagnostics.com/product/ncom01-defender-td5-kit)** - Commercial Td5 diagnostic tool
-- **[DiscoTD5.com Resources](https://www.discotd5.com/c-and-python-odds-and-ends/td5-keygen-now-github)** - Community diagnostic tools and resources
-
 ### Technical Forums & Development
 - **[ESP32 10400 Baud Issues](https://forum.arduino.cc/t/esp32-10400-baudrate-issue/1141941)** - Arduino forum discussion on non-standard baud rates
 - **[STMicroelectronics L9637D Community](https://community.st.com/t5/autodevkit-ecosystem/l9637d-k-line-transceiver-lo-pin-functionality/td-p/638515)** - L9637D implementation discussions
@@ -250,21 +245,12 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 
 ## 📄 License & Disclaimer
 
-This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for compliance with local laws and vehicle warranty considerations.
+This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for their own actions.
 
-**Safety Notice**: This interface is designed for diagnostic purposes only. Modifications to ECU parameters should only be performed by qualified technicians with appropriate safety measures.
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests. When contributing, please reference the technical sources listed above and maintain compatibility with the existing protocol implementation.
-
-## 📞 Support
-
-For technical support:
-1. Check the troubleshooting section above
-2. Review the referenced community forums
-3. Consult the original source projects listed in references
-4. Submit issues with detailed error logs and hardware configuration
 
 ---
 
