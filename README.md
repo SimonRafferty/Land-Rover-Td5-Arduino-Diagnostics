@@ -1,6 +1,6 @@
-# Land Rover Td5 ECU Interface for ESP32
+# Land Rover Td5 ECU Interface for ESP32 (Arduino)
 
-A complete Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
+A complete ESP32 / Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
 
 ## 🚗 Overview
 
@@ -257,19 +257,6 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **Reference Voltage**: Should be stable at ~5.0V; variations indicate ECU problems
 - **EGR/Wastegate**: Positions stuck at 0% or 100% suggest mechanical faults
 
-### Driver Input Switch Issues
-- **Clutch Switch**: Should show "Released" at idle, "PRESSED" when pedal down
-  - Stuck "PRESSED": Prevents cruise control, may affect engine response
-  - Wiring**: Check ECU pin 35 (Black/White wire) for continuity to clutch master cylinder
-- **Brake Switches**: Both switches should respond to pedal pressure
-  - Failed brake switch disables cruise control permanently
-  - Check primary brake switch and separate cruise control brake switch
-- **Gear Position**: Auto transmissions should show correct P/R/N/D position
-  - Incorrect readings affect idle speed and cruise control availability
-  - Manual transmissions only show "Neutral" vs "In Gear" status
-- **Handbrake Switch**: Should show "ON" when engaged, "Off" when released
-  - May affect hill start assist and parking brake warning systems
-
 ### Debug Tips
 - Monitor serial output at 115200 baud for detailed protocol traces
 - LED on GPIO 2 indicates successful ECU connection status
@@ -305,11 +292,6 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **[Cruise Control Wiring Guide](https://www.lrukforums.com/threads/wiring-up-td5-cruise-control.104970/)** - Technical details on clutch and brake switch integration
 - **[Digital Kaos Td5 ECU Repair](https://www.digital-kaos.co.uk/forums/showthread.php/802599-Land-Rover-Defender-TD5-ECU-repair/page2)** - Hardware repair insights
 
-### Commercial Tools Reference
-- **[BlackBox Solutions SM010](https://blackbox-solutions.com/help/SM010.html)** - Professional Lucas Td5 diagnostic specifications
-- **[NANOCOM Diagnostics](https://www.nanocom-diagnostics.com/product/ncom01-defender-td5-kit)** - Commercial Td5 diagnostic tool
-- **[DiscoTD5.com Resources](https://www.discotd5.com/c-and-python-odds-and-ends/td5-keygen-now-github)** - Community diagnostic tools and resources
-
 ### Technical Forums & Development
 - **[ESP32 10400 Baud Issues](https://forum.arduino.cc/t/esp32-10400-baudrate-issue/1141941)** - Arduino forum discussion on non-standard baud rates
 - **[STMicroelectronics L9637D Community](https://community.st.com/t5/autodevkit-ecosystem/l9637d-k-line-transceiver-lo-pin-functionality/td-p/638515)** - L9637D implementation discussions
@@ -317,22 +299,12 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 
 ## 📄 License & Disclaimer
 
-This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for compliance with local laws and vehicle warranty considerations.
-
-**Safety Notice**: This interface is designed for diagnostic purposes only. Modifications to ECU parameters should only be performed by qualified technicians with appropriate safety measures.
+This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on all the community research and open-source projects I could find.  On the basis that all the information is publicly available, I hope it does not infringe anyones IPR.  Mail me if you feel that it does and I'll remove the relevent sections. 
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests. When contributing, please reference the technical sources listed above and maintain compatibility with the existing protocol implementation.
 
-## 📞 Support
-
-For technical support:
-1. Check the troubleshooting section above
-2. Review the referenced community forums
-3. Consult the original source projects listed in references
-4. Submit issues with detailed error logs and hardware configuration
-
 ---
 
-*This project builds upon the excellent work of the Land Rover community, particularly the reverse engineering efforts documented in the referenced GitHub projects and forum discussions.*
+*This project builds upon the amazing work of the Land Rover community, particularly the reverse engineering efforts documented in the referenced GitHub projects and forum discussions.*
