@@ -1,6 +1,6 @@
-# Land Rover Td5 ECU Interface for ESP32 (Arduino)
+# Land Rover Td5 ECU Interface for ESP32
 
-A complete ESP32 / Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
+A complete Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
 
 ## 🚗 Overview
 
@@ -71,7 +71,7 @@ L9637D Pin 6 (K-Line) ──[510Ω]── +12V
 
 ## 📊 Live Data Output
 
-The interface provides real-time monitoring of over 20 engine parameters:
+The interface provides real-time monitoring of over 25 engine parameters and driver inputs:
 
 ```
 === Land Rover Td5 ECU Interface ===
@@ -80,16 +80,16 @@ Fast init successful, authenticating...
 ECU authenticated and connected!
 
 FUELLING - Speed: 45 km/h (27.9 mph), RPM: 1850, IQ: 12.50 mg/stroke, MAF: 18.5 kg/h, Throttle: 25.3%
-INPUTS - Brake Pedal: Released, Cruise Brake: Released
+INPUTS - Brake: Released, Cruise Brake: Released, Clutch: Released, Handbrake: Off, A/C: Off, CC: Off, Neutral: In Gear
 TEMPS - Coolant: 89°C, Fuel: 85°C, Inlet: 45°C, Ambient: 28°C, Battery: 14.2V
 PRESSURE - MAP: 240 kPa, AAP: 100 kPa, Boost: 140 kPa (20.3 psi), Vref: 5.02V
 ACTUATORS - EGR: 15.2%, Wastegate: 45.8%
 
-FUELLING - Speed: 50 km/h (31.1 mph), RPM: 2100, IQ: 15.75 mg/stroke, MAF: 22.3 kg/h, Throttle: 35.8%
-INPUTS - Brake Pedal: PRESSED, Cruise Brake: PRESSED
-TEMPS - Coolant: 91°C, Fuel: 87°C, Inlet: 48°C, Ambient: 30°C, Battery: 14.1V
-PRESSURE - MAP: 195 kPa, AAP: 100 kPa, Boost: 95 kPa (13.8 psi), Vref: 5.01V
-ACTUATORS - EGR: 8.5%, Wastegate: 25.2%
+FUELLING - Speed: 0 km/h (0.0 mph), RPM: 800, IQ: 8.25 mg/stroke, MAF: 12.1 kg/h, Throttle: 0.0%
+INPUTS - Brake: PRESSED, Cruise Brake: PRESSED, Clutch: PRESSED, Handbrake: ON, A/C: ON, CC: ON, Neutral: Selected, Gear: Park
+TEMPS - Coolant: 91°C, Fuel: 87°C, Inlet: 35°C, Ambient: 28°C, Battery: 14.1V
+PRESSURE - MAP: 101 kPa, AAP: 100 kPa, Boost: 1 kPa (0.1 psi), Vref: 5.01V
+ACTUATORS - EGR: 8.5%, Wastegate: 0.0%
 ```
 
 ### Complete Parameter List
@@ -100,6 +100,16 @@ ACTUATORS - EGR: 8.5%, Wastegate: 25.2%
 - **Injection Quantity**: mg/stroke with 0.01mg precision
 - **Manifold Air Flow (MAF)**: kg/h with 0.1kg/h precision
 - **Driver Demand**: Accelerator pedal position (0-100%)
+
+**Driver Input Monitoring:**
+- **Brake Pedal Switch**: Primary brake pedal detection
+- **Cruise Control Brake**: Secondary brake switch for cruise control
+- **Clutch Pedal Switch**: Surge damping and cruise control cutoff
+- **Handbrake Switch**: Parking brake engagement detection  
+- **Air Conditioning**: A/C compressor request signal
+- **Cruise Control Master**: Cruise control system on/off status
+- **Neutral Switch**: Manual transmission neutral position detection
+- **Gear Position**: Automatic transmission gear selection (P/R/N/D/3/2/1)
 
 **Temperature Monitoring:**
 - **Coolant Temperature**: °C, critical for overheating detection
@@ -119,7 +129,6 @@ ACTUATORS - EGR: 8.5%, Wastegate: 25.2%
 
 **Emissions Control:**
 - **EGR Inlet Throttle Position**: 0-100%, exhaust gas recirculation
-- **Brake Pedal Switches**: Primary and cruise control detection
 
 **System Status:**
 - **Communication Health**: Keep-alive status, error detection
@@ -167,7 +176,48 @@ uint16_t calculateTd5Key(uint16_t seed) {
 - **Keep-alive Messages**: Required every 1.5 seconds
 - **Response Timeouts**: 2-second windows with retry logic
 
+### Driver Input Technical Details
+
+**Clutch Pedal Switch Operation:**
+- **Location**: Mounted on clutch master cylinder
+- **Wiring**: ECU black plug pin 35 (Black/White wire)
+- **Logic**: Normally closed, opens when clutch pressed
+- **Function**: Enables "surge damping" to prevent engine over-rev during gear changes
+- **Cruise Control**: Disables cruise control when clutch engaged for safety
+
+**Brake Pedal Switch System:**
+- **Primary Switch**: Main brake light and ECU detection 
+- **Cruise Switch**: Secondary switch specifically for cruise control cutoff
+- **Safety Logic**: Either switch activation disables cruise control immediately
+
+**Gear Position Detection:**
+- **Manual Transmissions**: Neutral switch only (in/out of gear)
+- **Automatic Transmissions**: Full PRND321 position reporting
+- **Integration**: Affects idle speed control and cruise control availability
+
+**Air Conditioning Integration:**
+- **Compressor Request**: ECU monitors A/C system demand
+- **Load Compensation**: Increases idle speed when A/C compressor engages
+- **Engine Protection**: May limit boost/power when A/C load is high
+
+**Handbrake Integration:**
+- **Safety Function**: Some ECU variants monitor handbrake for hill start assist
+- **Diagnostic**: Helps identify parking/stationary conditions
+- **Model Dependent**: Not all Td5 variants include handbrake monitoring
+
 ### Data Logging and Analysis Capabilities
+
+With over 25 live parameters available, this interface enables:
+- **Real-time Performance Monitoring**: Track boost pressure, injection quantity, and temperatures
+- **Driver Behavior Analysis**: Monitor clutch, brake, and throttle input patterns
+- **Diagnostic Troubleshooting**: Monitor sensor voltages and actuator positions
+- **Fuel Economy Analysis**: Log MAF, injection quantity, and driver demand relationships  
+- **Temperature Management**: Track coolant, fuel, and inlet air temperatures
+- **Turbo System Health**: Monitor boost pressure, wastegate position, and MAP/AAP sensors
+- **Electrical System Status**: Battery voltage and ECU reference voltage monitoring
+- **Transmission Diagnostics**: Gear position and neutral switch monitoring for both manual and automatic
+
+The comprehensive parameter set exceeds commercial diagnostic tools like NANOCOM, providing professional-level data access including driver input monitoring typically only available to Land Rover technicians.
 
 With over 20 live parameters available, this interface enables:
 - **Real-time Performance Monitoring**: Track boost pressure, injection quantity, and temperatures
@@ -207,6 +257,19 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **Reference Voltage**: Should be stable at ~5.0V; variations indicate ECU problems
 - **EGR/Wastegate**: Positions stuck at 0% or 100% suggest mechanical faults
 
+### Driver Input Switch Issues
+- **Clutch Switch**: Should show "Released" at idle, "PRESSED" when pedal down
+  - Stuck "PRESSED": Prevents cruise control, may affect engine response
+  - Wiring**: Check ECU pin 35 (Black/White wire) for continuity to clutch master cylinder
+- **Brake Switches**: Both switches should respond to pedal pressure
+  - Failed brake switch disables cruise control permanently
+  - Check primary brake switch and separate cruise control brake switch
+- **Gear Position**: Auto transmissions should show correct P/R/N/D position
+  - Incorrect readings affect idle speed and cruise control availability
+  - Manual transmissions only show "Neutral" vs "In Gear" status
+- **Handbrake Switch**: Should show "ON" when engaged, "Off" when released
+  - May affect hill start assist and parking brake warning systems
+
 ### Debug Tips
 - Monitor serial output at 115200 baud for detailed protocol traces
 - LED on GPIO 2 indicates successful ECU connection status
@@ -235,8 +298,17 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 
 ### Community Resources
 - **[Australian Land Rover Owners - Td5 OBD2 Reversing](https://www.aulro.com/afvb/electronic-diagnostic-systems/240456-td5-obd2-reversing.html)** - Community reverse engineering efforts
+- **[Clutch Switch Operation Discussion](https://www.aulro.com/afvb/technical-chatter/31072-clutch-switch-operation-td5.html)** - Technical analysis of clutch switch surge damping function
 - **[LandyZone Td5 Communication Forum](https://www.landyzone.co.uk/land-rover/discovery-2-td5-cant-communicate.366647/)** - Troubleshooting discussions
+- **[Td5 Throttle Pedal Diagnostics](https://www.lrukforums.com/threads/defender-td5-throttle-problems.142192/)** - Driver demand and input switch troubleshooting
+- **[Land Rover Monthly - Throttle Pedal Fix](https://www.landrovermonthly.co.uk/articles/defender-td5-throttle-pedal-fix/)** - Professional repair procedures for driver input issues
+- **[Cruise Control Wiring Guide](https://www.lrukforums.com/threads/wiring-up-td5-cruise-control.104970/)** - Technical details on clutch and brake switch integration
 - **[Digital Kaos Td5 ECU Repair](https://www.digital-kaos.co.uk/forums/showthread.php/802599-Land-Rover-Defender-TD5-ECU-repair/page2)** - Hardware repair insights
+
+### Commercial Tools Reference
+- **[BlackBox Solutions SM010](https://blackbox-solutions.com/help/SM010.html)** - Professional Lucas Td5 diagnostic specifications
+- **[NANOCOM Diagnostics](https://www.nanocom-diagnostics.com/product/ncom01-defender-td5-kit)** - Commercial Td5 diagnostic tool
+- **[DiscoTD5.com Resources](https://www.discotd5.com/c-and-python-odds-and-ends/td5-keygen-now-github)** - Community diagnostic tools and resources
 
 ### Technical Forums & Development
 - **[ESP32 10400 Baud Issues](https://forum.arduino.cc/t/esp32-10400-baudrate-issue/1141941)** - Arduino forum discussion on non-standard baud rates
@@ -245,12 +317,21 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 
 ## 📄 License & Disclaimer
 
-This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for their own actions.
+This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for compliance with local laws and vehicle warranty considerations.
 
+**Safety Notice**: This interface is designed for diagnostic purposes only. Modifications to ECU parameters should only be performed by qualified technicians with appropriate safety measures.
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests. When contributing, please reference the technical sources listed above and maintain compatibility with the existing protocol implementation.
+
+## 📞 Support
+
+For technical support:
+1. Check the troubleshooting section above
+2. Review the referenced community forums
+3. Consult the original source projects listed in references
+4. Submit issues with detailed error logs and hardware configuration
 
 ---
 

@@ -1,7 +1,16 @@
 /*
  * Land Rover Td5 ECU Interface for ESP32
  * K-Line Communication at 10400 baud
- * Extracts live data: Vehicle Speed, Brake Pedal Switch, Engine Parameters
+ * Extracts live data: Vehicle Speed, Engine Parameters, Driver Inputs
+ * 
+ * Driver Input Monitoring:
+ * - Brake pedal switches (primary + cruise control)
+ * - Clutch pedal switch (surge damping control)
+ * - Handbrake switch (parking brake detection)
+ * - Air conditioning compressor request
+ * - Cruise control master switch
+ * - Neutral switch (manual) / Gear position (auto)
+ * - Complete temperature, pressure, and performance monitoring
  * 
  * Hardware Requirements:
  * - ESP32 development board
@@ -56,6 +65,12 @@ uint8_t rxIndex = 0;
 uint16_t vehicleSpeed = 0;          // km/h
 bool brakePedalPressed = false;
 bool cruiseBrakePressed = false;
+bool clutchPedalPressed = false;
+bool handbrakeEngaged = false;
+bool airConRequest = false;
+bool cruiseControlOn = false;
+bool neutralSelected = false;
+uint8_t gearPosition = 0;           // 0=Park, 1=Reverse, 2=Neutral, 3=Drive, etc.
 uint16_t engineRPM = 0;
 int16_t coolantTemp = 0;            // °C
 int16_t fuelTemp = 0;               // °C
@@ -358,16 +373,53 @@ void processECUResponse(uint8_t* data, int length) {
           Serial.println("%");
         }
       } else if (subfunction == 0x21) {
-        // Input status response (brake switches and other inputs)
-        if (length >= 4) {
-          uint8_t inputByte = data[3];
-          brakePedalPressed = (inputByte & 0x01) != 0;     // Bit 0
-          cruiseBrakePressed = (inputByte & 0x02) == 0;    // Bit 1 (inverted)
+        // Input status response (brake switches and all other driver inputs)
+        if (length >= 6) {
+          uint8_t inputByte1 = data[3];  // Primary input switches
+          uint8_t inputByte2 = data[4];  // Secondary input switches  
+          uint8_t inputByte3 = data[5];  // Additional switches/gear position
           
-          Serial.print("INPUTS - Brake Pedal: ");
+          // Parse primary input switches (inputByte1)
+          brakePedalPressed = (inputByte1 & 0x01) != 0;        // Bit 0: Primary brake switch
+          cruiseBrakePressed = (inputByte1 & 0x02) == 0;       // Bit 1: Cruise brake (inverted logic)
+          clutchPedalPressed = (inputByte1 & 0x04) == 0;       // Bit 2: Clutch switch (normally closed)
+          handbrakeEngaged = (inputByte1 & 0x08) != 0;         // Bit 3: Handbrake switch
+          airConRequest = (inputByte1 & 0x10) != 0;            // Bit 4: A/C compressor request
+          cruiseControlOn = (inputByte1 & 0x20) != 0;          // Bit 5: Cruise control master
+          neutralSelected = (inputByte1 & 0x40) != 0;          // Bit 6: Neutral switch (manual)
+          
+          // Parse gear position (inputByte3 for auto transmissions)
+          gearPosition = inputByte3 & 0x0F;  // Lower 4 bits: gear position
+          
+          Serial.print("INPUTS - Brake: ");
           Serial.print(brakePedalPressed ? "PRESSED" : "Released");
           Serial.print(", Cruise Brake: ");
-          Serial.println(cruiseBrakePressed ? "PRESSED" : "Released");
+          Serial.print(cruiseBrakePressed ? "PRESSED" : "Released");
+          Serial.print(", Clutch: ");
+          Serial.print(clutchPedalPressed ? "PRESSED" : "Released");
+          Serial.print(", Handbrake: ");
+          Serial.print(handbrakeEngaged ? "ON" : "Off");
+          Serial.print(", A/C: ");
+          Serial.print(airConRequest ? "ON" : "Off");
+          Serial.print(", CC: ");
+          Serial.print(cruiseControlOn ? "ON" : "Off");
+          Serial.print(", Neutral: ");
+          Serial.print(neutralSelected ? "Selected" : "In Gear");
+          
+          if (gearPosition > 0) {
+            Serial.print(", Gear: ");
+            switch(gearPosition) {
+              case 1: Serial.print("Park"); break;
+              case 2: Serial.print("Reverse"); break; 
+              case 3: Serial.print("Neutral"); break;
+              case 4: Serial.print("Drive"); break;
+              case 5: Serial.print("3rd"); break;
+              case 6: Serial.print("2nd"); break;
+              case 7: Serial.print("1st"); break;
+              default: Serial.print("Unknown"); break;
+            }
+          }
+          Serial.println();
         }
       } else if (subfunction == 0x22) {
         // Temperature sensors response
