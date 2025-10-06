@@ -1,6 +1,14 @@
-# Land Rover Td5 ECU Interface for ESP32 (Arduino)
+# Land Rover Td5 ECU Interface for ESP32
 
-A complete ESP32 / Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
+A complete Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
+
+## 📡 ESP-NOW Wireless Broadcasting
+
+This project now includes **ESP-NOW wireless data broadcasting** capabilities for transmitting all ECU data to multiple recipients without requiring Wi-Fi network infrastructure or MAC address pairing.
+
+### Available Implementations
+- **`Td5_ECU_Interface.ino`**: Original K-Line interface with serial output
+- **`Td5_ESPNow.ino`**: Enhanced version with ESP-NOW broadcasting capabilities
 
 ## 🚗 Overview
 
@@ -11,6 +19,7 @@ The Land Rover Td5 engine ECU uses a non-standard implementation of the ISO 9141
 - **Real-time data extraction** for speed, RPM, brake status, and engine parameters
 - **Robust error recovery** and keep-alive message handling
 - **Complete hardware interface** specifications with L9637D transceiver
+- **ESP-NOW wireless broadcasting** for multiple adaptive cruise control recipients
 
 ## 🔧 Hardware Requirements
 
@@ -257,6 +266,19 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **Reference Voltage**: Should be stable at ~5.0V; variations indicate ECU problems
 - **EGR/Wastegate**: Positions stuck at 0% or 100% suggest mechanical faults
 
+### Driver Input Switch Issues
+- **Clutch Switch**: Should show "Released" at idle, "PRESSED" when pedal down
+  - Stuck "PRESSED": Prevents cruise control, may affect engine response
+  - Wiring**: Check ECU pin 35 (Black/White wire) for continuity to clutch master cylinder
+- **Brake Switches**: Both switches should respond to pedal pressure
+  - Failed brake switch disables cruise control permanently
+  - Check primary brake switch and separate cruise control brake switch
+- **Gear Position**: Auto transmissions should show correct P/R/N/D position
+  - Incorrect readings affect idle speed and cruise control availability
+  - Manual transmissions only show "Neutral" vs "In Gear" status
+- **Handbrake Switch**: Should show "ON" when engaged, "Off" when released
+  - May affect hill start assist and parking brake warning systems
+
 ### Debug Tips
 - Monitor serial output at 115200 baud for detailed protocol traces
 - LED on GPIO 2 indicates successful ECU connection status
@@ -292,19 +314,207 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **[Cruise Control Wiring Guide](https://www.lrukforums.com/threads/wiring-up-td5-cruise-control.104970/)** - Technical details on clutch and brake switch integration
 - **[Digital Kaos Td5 ECU Repair](https://www.digital-kaos.co.uk/forums/showthread.php/802599-Land-Rover-Defender-TD5-ECU-repair/page2)** - Hardware repair insights
 
+### Commercial Tools Reference
+- **[BlackBox Solutions SM010](https://blackbox-solutions.com/help/SM010.html)** - Professional Lucas Td5 diagnostic specifications
+- **[NANOCOM Diagnostics](https://www.nanocom-diagnostics.com/product/ncom01-defender-td5-kit)** - Commercial Td5 diagnostic tool
+- **[DiscoTD5.com Resources](https://www.discotd5.com/c-and-python-odds-and-ends/td5-keygen-now-github)** - Community diagnostic tools and resources
+
 ### Technical Forums & Development
 - **[ESP32 10400 Baud Issues](https://forum.arduino.cc/t/esp32-10400-baudrate-issue/1141941)** - Arduino forum discussion on non-standard baud rates
 - **[STMicroelectronics L9637D Community](https://community.st.com/t5/autodevkit-ecosystem/l9637d-k-line-transceiver-lo-pin-functionality/td-p/638515)** - L9637D implementation discussions
 - **[K-Line Reader Projects](https://github.com/muki01/OBD2_K-line_Reader)** - Additional K-Line implementation examples
 
+## 📡 ESP-NOW Data Broadcasting Schema
+
+### Message Types and Structure
+
+The ESP-NOW implementation uses a structured packet format with six distinct message types for organized data transmission:
+
+#### Packet Header (8 bytes)
+```c
+struct Td5PacketHeader {
+  uint32_t timestamp;      // milliseconds since ESP32 boot
+  uint16_t sequence;       // incrementing packet sequence number
+  uint8_t messageType;     // message type identifier (see below)
+  uint8_t dataLength;      // payload size in bytes
+};
+```
+
+#### Message Types
+
+**1. FUELLING Data (0x01) - 10 bytes payload**
+```c
+struct Td5FuellingData {
+  uint16_t vehicleSpeed;      // km/h
+  uint16_t engineRPM;         // RPM
+  uint16_t injectionQuantity; // mg/stroke * 100
+  uint16_t manifoldAirFlow;   // kg/h * 10
+  uint16_t driverDemand;      // throttle position % * 100
+};
+```
+
+**2. INPUTS Data (0x02) - 4 bytes payload**
+```c
+struct Td5InputsData {
+  uint8_t switchStates;       // bit field (see below)
+  uint8_t gearPosition;       // 0=Park, 1=Reverse, 2=Neutral, 3=Drive, etc.
+  uint8_t reserved[2];        // future expansion
+};
+
+// switchStates bit field:
+// Bit 0: Brake pedal (1=pressed)
+// Bit 1: Cruise brake (1=pressed)
+// Bit 2: Clutch pedal (1=pressed)
+// Bit 3: Handbrake (1=engaged)
+// Bit 4: A/C request (1=on)
+// Bit 5: Cruise control (1=on)
+// Bit 6: Neutral switch (1=selected)
+// Bit 7: Reserved
+```
+
+**3. TEMPERATURES Data (0x03) - 10 bytes payload**
+```c
+struct Td5TemperaturesData {
+  int16_t coolantTemp;        // °C
+  int16_t fuelTemp;           // °C
+  int16_t inletAirTemp;       // °C
+  int16_t ambientAirTemp;     // °C
+  uint16_t batteryVoltage;    // mV
+};
+```
+
+**4. PRESSURES Data (0x04) - 8 bytes payload**
+```c
+struct Td5PressuresData {
+  uint16_t manifoldPressure;  // kPa
+  uint16_t ambientPressure;   // kPa
+  uint16_t boostPressure;     // kPa (calculated: MAP - AAP)
+  uint16_t referenceVoltage;  // mV (ECU 5V reference)
+};
+```
+
+**5. ACTUATORS Data (0x05) - 8 bytes payload**
+```c
+struct Td5ActuatorsData {
+  uint16_t egrPosition;       // EGR throttle position % * 100
+  uint16_t wastegatePosition; // turbo wastegate position % * 100
+  uint8_t reserved[4];        // future actuators
+};
+```
+
+**6. STATUS Data (0x06) - 8 bytes payload**
+```c
+struct Td5StatusData {
+  uint8_t connectionState;    // ECU connection state (0-4)
+  uint8_t lastErrorCode;      // last ECU error received
+  uint16_t connectionUptime;  // seconds since connection established
+  uint32_t totalPacketsSent;  // ESP-NOW transmission statistics
+};
+```
+
+### Broadcasting Configuration
+
+- **Channel**: Channel 1 (configurable via `ESPNOW_CHANNEL`)
+- **Broadcast Address**: `FF:FF:FF:FF:FF:FF` (no pairing required)
+- **Update Rate**: 250ms per message type (4Hz per type, 24Hz total)
+- **Range**: Typically 100-200m line of sight, 20-50m through obstacles
+- **Maximum Recipients**: Unlimited (broadcast mode)
+
+### Packet Validation
+
+Each packet includes an XOR checksum calculated across the header and payload:
+```c
+uint8_t checksum = 0;
+for (size_t i = 0; i < headerSize + payloadSize; i++) {
+  checksum ^= packetData[i];
+}
+```
+
+### Receiver Implementation Example
+
+```c
+#include <esp_now.h>
+#include <WiFi.h>
+
+void onDataReceived(const uint8_t *mac, const uint8_t *data, int len) {
+  if (len < sizeof(Td5PacketHeader) + 1) return;
+
+  Td5PacketHeader* header = (Td5PacketHeader*)data;
+  uint8_t* payload = (uint8_t*)data + sizeof(Td5PacketHeader);
+  uint8_t receivedChecksum = data[len - 1];
+
+  // Validate checksum
+  uint8_t calculatedChecksum = 0;
+  for (int i = 0; i < len - 1; i++) {
+    calculatedChecksum ^= data[i];
+  }
+
+  if (calculatedChecksum != receivedChecksum) {
+    Serial.println("Checksum validation failed");
+    return;
+  }
+
+  // Process by message type
+  switch (header->messageType) {
+    case 0x01: // FUELLING
+      Td5FuellingData* fuelling = (Td5FuellingData*)payload;
+      Serial.print("Speed: ");
+      Serial.print(fuelling->vehicleSpeed);
+      Serial.println(" km/h");
+      break;
+
+    case 0x02: // INPUTS
+      Td5InputsData* inputs = (Td5InputsData*)payload;
+      bool brakePressed = (inputs->switchStates & 0x01) != 0;
+      Serial.print("Brake: ");
+      Serial.println(brakePressed ? "PRESSED" : "Released");
+      break;
+
+    // Handle other message types...
+  }
+}
+
+void setup() {
+  WiFi.mode(WIFI_STA);
+  esp_now_init();
+  esp_now_register_recv_cb(onDataReceived);
+}
+```
+
+### Integration with Adaptive Cruise Control
+
+The structured message format enables sophisticated cruise control implementations:
+
+1. **Speed Control**: Use FUELLING data for current speed and throttle position
+2. **Safety Monitoring**: Monitor INPUTS data for brake pedal activation
+3. **System Health**: Track TEMPERATURES and PRESSURES for engine protection
+4. **Performance**: Analyze ACTUATORS data for turbo and EGR operation
+
+### Troubleshooting ESP-NOW
+
+- **No Data Received**: Check ESP-NOW initialization and channel configuration
+- **Intermittent Reception**: Verify power supply stability and antenna positioning
+- **Range Issues**: Consider ESP32 variant (some have better RF performance)
+- **Checksum Errors**: Check for interference or power supply noise
+
 ## 📄 License & Disclaimer
 
-This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on all the community research and open-source projects I could find.  On the basis that all the information is publicly available, I hope it does not infringe anyones IPR.  Mail me if you feel that it does and I'll remove the relevent sections. 
+This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for compliance with local laws and vehicle warranty considerations.
+
+**Safety Notice**: This interface is designed for diagnostic purposes only. Modifications to ECU parameters should only be performed by qualified technicians with appropriate safety measures.
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests. When contributing, please reference the technical sources listed above and maintain compatibility with the existing protocol implementation.
 
+## 📞 Support
+
+For technical support:
+1. Check the troubleshooting section above
+2. Review the referenced community forums
+3. Consult the original source projects listed in references
+4. Submit issues with detailed error logs and hardware configuration
+
 ---
 
-*This project builds upon the amazing work of the Land Rover community, particularly the reverse engineering efforts documented in the referenced GitHub projects and forum discussions.*
+*This project builds upon the excellent work of the Land Rover community, particularly the reverse engineering efforts documented in the referenced GitHub projects and forum discussions.*
