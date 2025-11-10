@@ -1,0 +1,630 @@
+# Land Rover Td5 ECU - PID Reference Guide
+
+**EXPERIMENTAL - Based on reverse-engineering and K-Line traffic analysis**
+
+**DISCLAIMER**: This PID list is compiled from community research and passive protocol monitoring. Not all PIDs work reliably on all ECU variants. Some PIDs cause ECU rejections and should be avoided. Testing is ongoing. Use at your own risk.
+
+## Quick Reference: Command Format
+
+**Service 0x21: ReadDataByLocalIdentifier**
+```
+Request:  [0x02] [0x21] [PID] [Checksum]
+Response: [Length] [0x61] [PID] [Data_Bytes...] [Checksum]
+```
+
+**All multi-byte values are BIG-ENDIAN (MSB first)** *(Exception: PID 0x23 uses little-endian)*
+
+---
+
+## PID Reliability Status (Based on Captured Traffic Analysis)
+
+**WORKING PIDs (Observed in commercial diagnostic tool traffic):**
+- 0x09 (RPM), 0x0D (Speed), 0x21 (Digital Inputs)
+- 0x1A, 0x1B, 0x1C, 0x10 (Composite PIDs - see below)
+- 0x23 (Accelerator Tracks - composite, little-endian!)
+- 0x37 (EGR Position), 0x38 (Wastegate Position)
+- 0x40 (Cylinder Fuel Trim - composite)
+- 0x1E (Cruise/Brake Switches - composite)
+- 0x36 (Unknown status)
+
+**UNRELIABLE PIDs (Not observed in captured traffic, may cause ECU rejections):**
+- 0x07 (Coolant Temp), 0x08 (IAT), 0x0A (MAP), 0x0B (Fuel Temp), 0x0F (Ambient Pressure)
+- 0x17 (Battery Voltage), 0x20 (Injection Qty), 0x2B (EGR), 0x2C (Wastegate)
+
+**Note**: The unreliable PIDs listed above may work on some ECU variants but have been observed to cause rejection errors. Composite PIDs provide the same data more reliably.
+
+---
+
+## Composite PIDs (Multi-Parameter Responses)
+
+### PID 0x1A: Coolant, MAP, Boost (18 bytes expected)
+**Command:** `{0x02, 0x21, 0x1A, CS}`
+**Response Structure:**
+- Bytes 3-4: Coolant Temperature (Kelvin×10, big-endian)
+- Bytes 5-6: MAP - Manifold Absolute Pressure (Pa/100 = kPa)
+- Bytes 7-16: Unknown (9 bytes)
+- Boost = (MAP - 100) / 100 Bar
+
+**Decode Example:**
+```c
+uint16_t coolant_raw = (data[3] << 8) | data[4];
+int16_t coolant_c = ((int16_t)coolant_raw - 2732) / 10;
+
+uint16_t map_raw = (data[5] << 8) | data[6];
+float map_kpa = map_raw / 100.0;
+float boost_bar = (map_kpa - 100.0) / 100.0;
+```
+
+### PID 0x1B: Airflow, Ambient Pressure (12 bytes expected)
+**Command:** `{0x02, 0x21, 0x1B, CS}`
+**Response Structure:**
+- Bytes 3-4: Unknown
+- Bytes 5-6: Airflow/MAF (g/s)
+- Bytes 7-8: Ambient Pressure (raw / 46.94 = kPa)
+- Bytes 9-11: Unknown (3 bytes)
+
+**Decode Example:**
+```c
+uint16_t airflow_raw = (data[5] << 8) | data[6];
+float airflow_gs = airflow_raw / 1000.0;
+
+uint16_t ambient_raw = (data[7] << 8) | data[8];
+float ambient_kpa = ambient_raw / 46.94;
+```
+
+### PID 0x1C: Inlet Air Temp, Fuel Temp (11 bytes expected)
+**Command:** `{0x02, 0x21, 0x1C, CS}`
+**Response Structure:**
+- Bytes 3-4: Inlet Air Temperature (Kelvin×10)
+- Bytes 5-6: Fuel Temperature (Kelvin×10)
+- Bytes 7-10: Unknown (4 bytes)
+
+**Decode Example:**
+```c
+uint16_t iat_raw = (data[3] << 8) | data[4];
+int16_t iat_c = ((int16_t)iat_raw - 2732) / 10;
+
+uint16_t fuel_raw = (data[5] << 8) | data[6];
+int16_t fuel_c = ((int16_t)fuel_raw - 2732) / 10;
+```
+
+### PID 0x10: Battery Voltage (6 bytes expected)
+**Command:** `{0x02, 0x21, 0x10, CS}`
+**Response Structure:**
+- Bytes 3-4: Battery Voltage (millivolts)
+- Bytes 5-6: Reference Voltage (millivolts, typically ~5V sensor supply)
+
+**Decode Example:**
+```c
+uint16_t battery_mv = (data[3] << 8) | data[4];
+float battery_v = battery_mv / 1000.0;
+
+uint16_t ref_mv = (data[5] << 8) | data[6];
+float ref_v = ref_mv / 1000.0;
+```
+
+### PID 0x23: Accelerator Tracks (10 bytes, LITTLE-ENDIAN!)
+**Command:** `{0x02, 0x21, 0x23, CS}`
+**Response Structure:** *(Unique: uses little-endian byte order!)*
+- Bytes 3-4: Track 1 (LITTLE-ENDIAN: [Low][High])
+- Bytes 5-6: Track 2 (LITTLE-ENDIAN: [Low][High])
+- Bytes 7-8: Unknown
+- Bytes 9-10: Unknown
+
+**Decode Example:**
+```c
+// LITTLE-ENDIAN: reverse byte order!
+uint16_t track1_raw = (data[4] << 8) | data[3];  // Note: reversed!
+float track1_v = track1_raw / 1000.0;
+
+uint16_t track2_raw = (data[6] << 8) | data[5];  // Note: reversed!
+float track2_v = track2_raw / 1000.0;
+// Track1 + Track2 should sum to ~5.0V
+```
+
+### PID 0x37: EGR Position (2 bytes)
+**Command:** `{0x02, 0x21, 0x37, CS}`
+**Decode:** `Position_Percent = ((High_Byte << 8) | Low_Byte) / 100.0`
+
+### PID 0x38: Wastegate Position (2 bytes)
+**Command:** `{0x02, 0x21, 0x38, CS}`
+**Decode:** `Position_Percent = ((High_Byte << 8) | Low_Byte) / 100.0`
+
+### PID 0x40: Cylinder Fuel Trim (13 bytes)
+**Command:** `{0x02, 0x21, 0x40, CS}`
+**Response Structure:**
+- Bytes 3-4: Cylinder 1 trim
+- Bytes 5-6: Cylinder 2 trim
+- Bytes 7-8: Cylinder 3 trim
+- Bytes 9-10: Cylinder 4 trim
+- Bytes 11-12: Cylinder 5 trim
+All values big-endian, interpretation varies by ECU
+
+### PID 0x1E: Cruise/Brake Switches (composite, similar to 0x21)
+**Command:** `{0x02, 0x21, 0x1E, CS}`
+Contains brake and cruise control switch states (structure similar to PID 0x21)
+
+---
+
+## Engine Parameters
+
+### RPM
+**Command:** `{0x02, 0x21, 0x09, CS}`  
+**Response:** 2 bytes  
+**Decode:** `RPM = (High_Byte << 8) | Low_Byte`  
+**Units:** RPM  
+**Range:** 0-5000
+
+### Vehicle Speed
+**Command:** `{0x02, 0x21, 0x0D, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Speed_mph = ((High_Byte << 8) | Low_Byte) * 0.621371`  
+**Units:** MPH (multiply by 1.60934 for km/h)  
+**Range:** 0-180
+
+### Battery Voltage
+**Command:** `{0x02, 0x21, 0x17, CS}`
+**Response:** 2 bytes
+**Decode:** `Voltage = ((High_Byte << 8) | Low_Byte) / 1000.0`
+**Units:** Volts
+**Range:** 10.0-15.0V
+**STATUS:** ⚠️ UNRELIABLE - Use composite PID 0x10 instead
+
+---
+
+## Temperature Sensors
+
+### Coolant Temperature
+**Command:** `{0x02, 0x21, 0x07, CS}`  
+**Response:** 2 bytes (Kelvin × 10)  
+**Decode:** `Temp_C = (((High_Byte << 8) | Low_Byte) - 2732) / 10.0`  
+**Units:** °C  
+**Range:** 0-120°C (2732-3932 raw)
+
+### Inlet Air Temperature (IAT)
+**Command:** `{0x02, 0x21, 0x08, CS}`  
+**Response:** 2 bytes (Kelvin × 10)  
+**Decode:** `Temp_C = (((High_Byte << 8) | Low_Byte) - 2732) / 10.0`  
+**Units:** °C  
+**Range:** -20-80°C (2532-3532 raw)
+
+### Fuel Temperature
+**Command:** `{0x02, 0x21, 0x0B, CS}`  
+**Response:** 2 bytes (Kelvin × 10)  
+**Decode:** `Temp_C = (((High_Byte << 8) | Low_Byte) - 2732) / 10.0`  
+**Units:** °C  
+**Range:** -20-80°C
+
+### Ambient/External Temperature
+**Command:** `{0x02, 0x21, 0x0E, CS}`  
+**Response:** 2 bytes (Kelvin × 10)  
+**Decode:** `Temp_C = (((High_Byte << 8) | Low_Byte) - 2732) / 10.0`  
+**Units:** °C  
+**Range:** -50-50°C
+
+---
+
+## Accelerator Pedal Position
+
+### Accelerator Track 1
+**Command:** `{0x02, 0x21, 0x11, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Voltage = ((High_Byte << 8) | Low_Byte) / 1000.0`  
+**Units:** Volts  
+**Range:** 0-5.0V
+
+### Accelerator Track 2
+**Command:** `{0x02, 0x21, 0x12, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Voltage = ((High_Byte << 8) | Low_Byte) / 1000.0`  
+**Units:** Volts  
+**Range:** 0-5.0V
+
+### Accelerator Track 3 (Percentage)
+**Command:** `{0x02, 0x21, 0x13, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Percent = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** %  
+**Range:** 0-100%
+
+### Accelerator Supply Voltage
+**Command:** `{0x02, 0x21, 0x14, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Voltage = ((High_Byte << 8) | Low_Byte) / 1000.0`  
+**Units:** Volts  
+**Range:** ~5.0V (should be stable)
+
+---
+
+## Air/Pressure Sensors
+
+### Ambient Pressure
+**Command:** `{0x02, 0x21, 0x0F, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Pressure_kPa = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** kPa  
+**Range:** 90-110 kPa (9000-11000 raw)
+
+### Manifold Absolute Pressure (MAP)
+**Command:** `{0x02, 0x21, 0x0A, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Pressure_kPa = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** kPa  
+**Range:** 100-240 kPa (10000-24000 raw)
+
+### Mass Air Flow (MAF)
+**Command:** `{0x02, 0x21, 0x10, CS}`  
+**Response:** 2 bytes  
+**Decode:** `MAF_kg_h = ((High_Byte << 8) | Low_Byte) / 10.0`  
+**Units:** kg/h  
+**Range:** 60-800 kg/h (600-8000 raw)
+
+---
+
+## Fuel System
+
+### Driver Demand
+**Command:** `{0x02, 0x21, 0x1E, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Fuel_mg = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** mg/stroke  
+**Range:** 0-60 mg/stroke
+
+### Injection Quantity (Actual)
+**Command:** `{0x02, 0x21, 0x20, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Fuel_mg = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** mg/stroke  
+**Range:** 0-60 mg/stroke
+
+### MAF Air Mass
+**Command:** `{0x02, 0x21, 0x1B, CS}`  
+**Response:** 2 bytes  
+**Decode:** `AirMass_mg = ((High_Byte << 8) | Low_Byte) / 10.0`  
+**Units:** mg/stroke  
+**Range:** 500-1500 mg/stroke
+
+### MAP Air Mass
+**Command:** `{0x02, 0x21, 0x1C, CS}`  
+**Response:** 2 bytes  
+**Decode:** `AirMass_mg = ((High_Byte << 8) | Low_Byte) / 10.0`  
+**Units:** mg/stroke  
+**Range:** 500-1500 mg/stroke
+
+### Torque Limit
+**Command:** `{0x02, 0x21, 0x22, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Limit_mg = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** mg/stroke  
+**Range:** 0-60 mg/stroke
+
+### Smoke Limit
+**Command:** `{0x02, 0x21, 0x23, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Limit_mg = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** mg/stroke  
+**Range:** 0-60 mg/stroke
+
+### Idle Demand
+**Command:** `{0x02, 0x21, 0x24, CS}`  
+**Response:** 2 bytes  
+**Decode:** `Fuel_mg = ((High_Byte << 8) | Low_Byte) / 100.0`  
+**Units:** mg/stroke  
+**Range:** 8-12 mg/stroke (idle)
+
+---
+
+## Idle Control
+
+### Idle Speed Error
+**Command:** `{0x02, 0x21, 0x25, CS}`  
+**Response:** 2 bytes (SIGNED)  
+**Decode:** `Error_RPM = (int16_t)((High_Byte << 8) | Low_Byte)`  
+**Units:** RPM  
+**Range:** -200 to +200 RPM  
+**Note:** Signed integer - target minus actual
+
+---
+
+## Cylinder Balance (Idle Adjustment)
+
+### Cylinder 1 Balance
+**Command:** `{0x02, 0x21, 0x26, CS}`  
+**Response:** 2 bytes (SIGNED)  
+**Decode:** `Adjustment_RPM = (int16_t)((High_Byte << 8) | Low_Byte)`  
+**Units:** RPM adjustment  
+**Range:** ±100 RPM
+
+### Cylinder 2 Balance
+**Command:** `{0x02, 0x21, 0x27, CS}`  
+**Response:** 2 bytes (SIGNED)  
+**Decode:** `Adjustment_RPM = (int16_t)((High_Byte << 8) | Low_Byte)`  
+**Units:** RPM adjustment  
+**Range:** ±100 RPM
+
+### Cylinder 3 Balance
+**Command:** `{0x02, 0x21, 0x28, CS}`  
+**Response:** 2 bytes (SIGNED)  
+**Decode:** `Adjustment_RPM = (int16_t)((High_Byte << 8) | Low_Byte)`  
+**Units:** RPM adjustment  
+**Range:** ±100 RPM
+
+### Cylinder 4 Balance
+**Command:** `{0x02, 0x21, 0x29, CS}`  
+**Response:** 2 bytes (SIGNED)  
+**Decode:** `Adjustment_RPM = (int16_t)((High_Byte << 8) | Low_Byte)`  
+**Units:** RPM adjustment  
+**Range:** ±100 RPM
+
+### Cylinder 5 Balance
+**Command:** `{0x02, 0x21, 0x2A, CS}`  
+**Response:** 2 bytes (SIGNED)  
+**Decode:** `Adjustment_RPM = (int16_t)((High_Byte << 8) | Low_Byte)`  
+**Units:** RPM adjustment  
+**Range:** ±100 RPM
+
+---
+
+## Actuator Outputs (PWM Duty Cycle)
+
+### EGR Modulator
+**Command:** `{0x02, 0x21, 0x2B, CS}`  
+**Response:** 1-2 bytes (implementation varies)  
+**Decode:** `DutyCycle_Percent = Value` (check implementation)  
+**Units:** %  
+**Range:** 0-100%
+
+### Wastegate Modulator (Turbo Control)
+**Command:** `{0x02, 0x21, 0x2C, CS}`  
+**Response:** 1-2 bytes (implementation varies)  
+**Decode:** `DutyCycle_Percent = Value` (check implementation)  
+**Units:** %  
+**Range:** 0-100%  
+**Note:** Higher duty = more boost
+
+---
+
+## Digital Inputs (Switch States)
+
+These typically return as part of a status byte or multi-byte response. Exact PIDs vary by implementation.
+
+**Common Switch Inputs:**
+- Brake Switch 1 & 2 (redundant safety)
+- Clutch Switch (manual transmission)
+- Transfer Case High/Low
+- Cruise Control: Master, Resume, Set/Accel
+- AC Clutch Request/Drive
+- AC Fan Request/Drive
+- Gearbox Position (Auto: P/R/N/D)
+
+**Decode:** Typically bitfield or boolean (0x00 = OFF, 0x01 = ON)
+
+---
+
+## Configuration Data (Service 0x3B - ReadDataByIdentifier)
+
+### Injector Codes
+**Service:** 0x3B (not 0x21)  
+**PIDs:** Vary by cylinder (0x01-0x05 typical)  
+**Response:** 5 ASCII characters per injector  
+**Example:** "BFGC2"  
+**Note:** Required for proper fueling calibration
+
+### VIN (Vehicle Identification Number)
+**Service:** 0x3B  
+**PID:** Implementation specific  
+**Response:** 17 ASCII characters  
+**Decode:** Direct ASCII string
+
+### ECU Part Number
+**Service:** 0x3B  
+**Response:** Varies (typically ASCII)  
+**Format:** MSBxxxxxx or NNNxxxxxx
+
+---
+
+## Fault Codes (DTCs)
+
+### Read Stored Faults
+**Service:** 0x18 (ReadDTCByStatus)  
+**Command:** `{0x02, 0x18, 0x00, CS}` (all DTCs)  
+**Response:** Multiple bytes with DTC codes  
+**Format:** 2 bytes per DTC  
+**Decode:** Refer to Td5 DTC table (200+ codes)
+
+### Clear Faults
+**Service:** 0x14 (ClearDiagnosticInformation)  
+**Command:** `{0x03, 0x14, 0xFF, 0x00, CS}` (all groups)  
+**Response:** Acknowledgment
+
+---
+
+## Important Notes
+
+### Byte Order
+**All multi-byte values are BIG-ENDIAN (MSB first)**
+```c
+uint16_t value = (high_byte << 8) | low_byte;
+// Or equivalently:
+uint16_t value = (high_byte * 256) + low_byte;
+```
+
+### Signed Values
+For signed parameters (cylinder balance, idle error):
+```c
+int16_t signed_value = (int16_t)((high_byte << 8) | low_byte);
+```
+
+### Scale Factors Summary
+- **Temperatures:** Kelvin × 10, subtract 2732, divide by 10 → Celsius
+- **Voltages:** millivolts, divide by 1000 → Volts
+- **Pressures:** Pascals, divide by 100 → kPa
+- **MAF:** grams/hour × 10, divide by 10 → kg/h
+- **Fuel quantities:** mg × 100, divide by 100 → mg/stroke
+- **Air mass:** mg × 10, divide by 10 → mg/stroke
+- **Percentages:** × 100, divide by 100 → percent
+
+### Checksum Calculation
+```c
+uint8_t calculate_checksum(uint8_t *data, uint8_t length) {
+    uint16_t sum = 0;
+    for(uint8_t i = 0; i < length; i++) {
+        sum += data[i];
+    }
+    return (uint8_t)(sum & 0xFF);
+}
+```
+
+---
+
+## PID Discovery Notes
+
+**CRITICAL:** The hex command list above is compiled from open-source implementations and may not be 100% complete. The Td5 uses manufacturer-specific local identifiers that are not fully documented.
+
+**To extract the complete PID list:**
+
+1. **Ekaitza_Itzali (Python):**  
+   GitHub: https://github.com/EA2EGA/Ekaitza_Itzali  
+   Check `fuelling.py`, `switches.py`, `settings.py` for command definitions
+
+2. **TD5Tester (Java/Android):**  
+   GitHub: https://github.com/hairyone/TD5Tester  
+   Check parameter definitions in sensor classes
+
+3. **LRDuinoTD5 (C++):**  
+   GitHub: https://github.com/BennehBoy/LRDuinoTD5  
+   Check header files for PID definitions
+
+4. **Protocol Capture:**  
+   Use logic analyzer on working Nanocom/Hawkeye to capture actual commands
+
+---
+
+## Example Code: Parameter Reading
+
+### C/Arduino Implementation
+```c
+#define SERVICE_READ_BY_LOCAL_ID 0x21
+#define PID_RPM 0x09
+#define PID_COOLANT_TEMP 0x07
+#define PID_MAF 0x10
+
+uint16_t read_td5_parameter(uint8_t pid) {
+    uint8_t request[3] = {0x02, SERVICE_READ_BY_LOCAL_ID, pid};
+    uint8_t checksum = calculate_checksum(request, 3);
+    
+    // Send request
+    kwp_send_byte(request[0]);
+    kwp_send_byte(request[1]);
+    kwp_send_byte(request[2]);
+    kwp_send_byte(checksum);
+    
+    // Read response
+    uint8_t response[10];
+    uint8_t length = kwp_read_response(response, 10);
+    
+    // Verify response
+    if(response[1] != 0x61 || response[2] != pid) {
+        return 0xFFFF; // Error
+    }
+    
+    // Extract data (big-endian)
+    uint16_t value = (response[3] << 8) | response[4];
+    return value;
+}
+
+// Usage examples:
+uint16_t rpm = read_td5_parameter(PID_RPM);
+uint16_t coolant_raw = read_td5_parameter(PID_COOLANT_TEMP);
+float coolant_celsius = ((float)coolant_raw - 2732.0) / 10.0;
+```
+
+### Python Implementation
+```python
+def read_parameter(ser, pid):
+    """Read parameter via Service 0x21"""
+    request = [0x02, 0x21, pid]
+    checksum = sum(request) & 0xFF
+    
+    # Send request
+    ser.write(bytes(request + [checksum]))
+    
+    # Read response
+    response = list(ser.read(10))
+    
+    # Verify checksum
+    if sum(response[:-1]) & 0xFF != response[-1]:
+        raise ValueError("Checksum error")
+    
+    # Verify service response
+    if response[1] != 0x61 or response[2] != pid:
+        raise ValueError("Invalid response")
+    
+    # Extract data (big-endian)
+    value = (response[3] << 8) | response[4]
+    return value
+
+# Usage:
+rpm = read_parameter(ser, 0x09)
+coolant_raw = read_parameter(ser, 0x07)
+coolant_c = (coolant_raw - 2732) / 10.0
+```
+
+---
+
+## Quick Conversion Functions
+
+### C/C++
+```c
+// Temperature (Kelvin×10 to Celsius)
+float td5_temp_to_c(uint16_t raw) {
+    return ((float)raw - 2732.0f) / 10.0f;
+}
+
+// Voltage (millivolts to volts)
+float td5_voltage_to_v(uint16_t raw) {
+    return (float)raw / 1000.0f;
+}
+
+// Pressure (Pascals to kPa)
+float td5_pressure_to_kpa(uint16_t raw) {
+    return (float)raw / 100.0f;
+}
+
+// MAF (g/h×10 to kg/h)
+float td5_maf_to_kgh(uint16_t raw) {
+    return (float)raw / 10.0f;
+}
+
+// Fuel quantity (mg×100 to mg/stroke)
+float td5_fuel_to_mg(uint16_t raw) {
+    return (float)raw / 100.0f;
+}
+```
+
+---
+
+## Timing Requirements
+
+**Standard P2 timeout:** 50ms max (ECU should respond within 50ms)  
+**P3 minimum:** 55ms between responses (wait before next request)  
+**Optimal polling rate:** ~10-20 parameters per second max
+
+---
+
+## Hardware Notes
+
+**K-line Interface:** Pin 7 on OBD-II connector  
+**Recommended ICs:**
+- MC33290 (single-chip, no external components)
+- L9637D (widely used, requires pull-ups)
+- DIY transistor circuit (timing critical)
+
+**USB Adapters:**
+- VAG COM KKL (FTDI FT232) - works at 10,400 baud
+- CP2102 - requires custom baud rate programming
+
+---
+
+*Document compiled from open-source implementations: Ekaitza_Itzali, TD5Tester, LRDuinoTD5*  
+*Last updated: 2025-11-09*

@@ -1,6 +1,10 @@
 # Td5 ESP-NOW Data Protocol
 
+**EXPERIMENTAL - Testing Ongoing**
+
 This document describes the ESP-NOW wireless data protocol used to broadcast Land Rover Td5 ECU data for real-time monitoring, data logging, and diagnostic applications.
+
+**Disclaimer**: This protocol is part of an experimental research project. Data accuracy and reliability are not guaranteed. Use at your own risk.
 
 ## Overview
 
