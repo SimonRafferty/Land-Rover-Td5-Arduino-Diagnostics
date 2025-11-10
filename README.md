@@ -1,6 +1,10 @@
 # Land Rover Td5 ECU Interface for ESP32
 
-A complete Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
+**EXPERIMENTAL PROJECT - TESTING ONGOING**
+
+An experimental Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project attempts to extract vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
+
+**Disclaimer**: This is a work-in-progress research project. Protocol implementation is based on reverse-engineering efforts and may not work on all ECU variants. Testing is ongoing and results may vary.
 
 ## ESP-NOW Wireless Broadcasting
 
@@ -12,14 +16,14 @@ This project now includes **ESP-NOW wireless data broadcasting** capabilities fo
 
 ## Overview
 
-The Land Rover Td5 engine ECU uses a non-standard implementation of the ISO 9141-2 protocol that is incompatible with generic OBD2 scanners. This project provides a complete solution for ESP32-based communication, including:
+The Land Rover Td5 engine ECU uses a non-standard implementation of the ISO 9141-2 protocol that is incompatible with generic OBD2 scanners. This project attempts to provide an ESP32-based communication solution, including:
 
-- **Fast initialization sequence** with precise timing control
-- **Seed-key authentication** using reverse-engineered algorithm
+- **Fast initialization sequence** with timing control (based on reverse-engineering)
+- **Seed-key authentication** using community-discovered algorithm
 - **Real-time data extraction** for speed, RPM, brake status, and engine parameters
-- **Robust error recovery** and keep-alive message handling
-- **Complete hardware interface** specifications with L9637D transceiver
-- **ESP-NOW wireless broadcasting** for multiple adaptive cruise control recipients
+- **Error recovery** and keep-alive message handling
+- **Hardware interface** specifications with L9637D transceiver
+- **ESP-NOW wireless broadcasting** for wireless data transmission
 
 ## Hardware Requirements
 
@@ -80,7 +84,7 @@ L9637D Pin 6 (K-Line) ──[510Ω]── +12V
 
 ## Live Data Output
 
-The interface provides real-time monitoring of over 25 engine parameters and driver inputs:
+The interface attempts to provide real-time monitoring of various engine parameters and driver inputs. Not all parameters may work on all ECU variants:
 
 ```
 === Land Rover Td5 ECU Interface ===
@@ -174,7 +178,7 @@ uint16_t calculateTd5Key(uint16_t seed) {
 
 ### Live Data PID Polling
 
-The implementation uses Service 0x21 (Read Data By Local Identifier) with various PID values. Based on Nanocom traffic analysis, the following PIDs have been validated:
+The implementation uses Service 0x21 (Read Data By Local Identifier) with various PID values. Based on passive monitoring of K-Line traffic from commercial diagnostic tools, the following PIDs appear to be supported:
 
 **Simple 2-byte PIDs:**
 - **PID 0x09**: Engine RPM (direct value)
@@ -195,37 +199,42 @@ The implementation uses Service 0x21 (Read Data By Local Identifier) with variou
 **Decoding Formulas:**
 - Temperatures: `((raw - 2732) / 10)` converts Kelvin×10 to Celsius
 - Battery/Reference Voltage: Raw value in millivolts
-- MAP/Boost: `raw / 100` converts to kPa, boost = `(MAP - 100) kPa`
+- MAP: `raw / 100` converts to kPa
+- Boost Pressure: `(MAP - 100) / 100` converts to Bar (relative to atmospheric)
 - Airflow: `raw / 1000` converts to g/s
 - Ambient Pressure: `raw / 46.94` converts to kPa
 - Actuator Positions: `raw / 100` converts to percentage
 
-### Critical Implementation Notes
-- **Echo Cancellation**: Half-duplex requires intelligent echo filtering (handles partial echoes)
-- **Inter-byte Timing**: 5ms delays improve reliability
-- **Keep-alive Messages**: Required every 1.5 seconds (Service 0x3E)
-- **Response Timeouts**: 500ms for composite PIDs (vs 150ms for simple PIDs)
-- **PID Validation**: Only use Nanocom-validated PIDs to avoid ECU rejections
-- **P3 Timing**: Minimum 25ms delay between ECU response and next tester request
+Note: These formulas have been validated against known values from commercial diagnostic tools, though accuracy may vary by ECU variant.
 
-### PID Discovery & Validation
+### Implementation Notes
+- **Echo Cancellation**: Half-duplex requires intelligent echo filtering for partial echoes
+- **Inter-byte Timing**: 5ms delays between bytes improves reliability
+- **Keep-alive Messages**: Service 0x3E sent every 1.5 seconds to maintain connection
+- **Response Timeouts**: Longer timeouts (500ms) necessary for multi-byte responses
+- **PID Selection**: Some PIDs observed in captured traffic, others cause ECU rejections
+- **P3 Timing**: 25ms delay between ECU response and next request per protocol specification
 
-The PID list was validated by passively monitoring K-Line traffic between a Nanocom diagnostic tool and the Td5 ECU. This approach identified which PIDs are reliably supported:
+### PID Discovery Methodology (Ongoing Research)
 
-**Working PIDs (validated from Nanocom capture):**
+The PID list was derived by passively monitoring K-Line traffic between a commercial diagnostic tool and the Td5 ECU. This approach helped identify which PIDs appear to work more reliably:
+
+**PIDs Observed in Captured Traffic:**
 - 0x09, 0x0D, 0x1A, 0x1C, 0x10, 0x1B, 0x21, 0x40, 0x23, 0x37, 0x38, 0x1E, 0x36
 
-**Unreliable PIDs (never used by Nanocom, cause ECU rejections):**
+**PIDs Not Observed (May Cause Rejections):**
 - 0x07, 0x0A, 0x0B, 0x0F, 0x17, 0x20, 0x2B, 0x2C
 
-The validated PIDs provide complete coverage of all Nanocom display screens (Pages 1-5), including all engine performance parameters, temperatures, pressures, and driver inputs. Using only validated PIDs prevents ECU rejection errors and maintains stable communication.
+Based on limited testing, using PIDs observed in captured traffic appears to reduce ECU rejection errors. However, this may vary by ECU variant and vehicle configuration.
 
-**Key Findings:**
-- Composite PIDs (0x1A, 0x1B, 0x1C) consolidate multiple parameters in single responses
-- PID 0x23 uniquely uses little-endian byte order (all others are big-endian)
-- Battery voltage moved from unreliable PID 0x17 to composite PID 0x10
-- All temperature data available via composite PIDs 0x1A and 0x1C
-- Polling cycle optimized to match Nanocom timing (50ms between requests)
+**Preliminary Observations:**
+- Some PIDs (0x1A, 0x1B, 0x1C) appear to return multiple parameters in single responses
+- PID 0x23 may use little-endian byte order (unlike other PIDs which appear big-endian)
+- Battery voltage data seems more reliable from PID 0x10 than 0x17 in initial tests
+- Temperature data appears available via PIDs 0x1A and 0x1C
+- Polling delay of ~50ms between requests observed in captured traffic
+
+**Note**: These findings are based on limited testing with specific ECU variants. Results may differ on other vehicles.
 
 ### Driver Input Technical Details
 
@@ -256,29 +265,19 @@ The validated PIDs provide complete coverage of all Nanocom display screens (Pag
 - **Diagnostic**: Helps identify parking/stationary conditions
 - **Model Dependent**: Not all Td5 variants include handbrake monitoring
 
-### Data Logging and Analysis Capabilities
+### Potential Data Logging Applications
 
-With over 25 live parameters available, this interface enables:
-- **Real-time Performance Monitoring**: Track boost pressure, injection quantity, and temperatures
-- **Driver Behavior Analysis**: Monitor clutch, brake, and throttle input patterns
-- **Diagnostic Troubleshooting**: Monitor sensor voltages and actuator positions
-- **Fuel Economy Analysis**: Log MAF, injection quantity, and driver demand relationships  
-- **Temperature Management**: Track coolant, fuel, and inlet air temperatures
-- **Turbo System Health**: Monitor boost pressure, wastegate position, and MAP/AAP sensors
-- **Electrical System Status**: Battery voltage and ECU reference voltage monitoring
-- **Transmission Diagnostics**: Gear position and neutral switch monitoring for both manual and automatic
+Based on testing, this interface may support:
+- **Performance Monitoring**: Track boost pressure, injection quantity, and temperatures
+- **Driver Input Analysis**: Monitor clutch, brake, and throttle inputs
+- **Diagnostic Data Collection**: Access sensor voltages and actuator positions
+- **Fuel Economy Logging**: MAF, injection quantity, and driver demand data
+- **Temperature Monitoring**: Coolant, fuel, and inlet air temperature readings
+- **Turbo System Data**: Boost pressure, wastegate position, and pressure sensor data
+- **Electrical Monitoring**: Battery voltage and reference voltage readings
+- **Transmission Data**: Gear position and neutral switch status (on supported variants)
 
-The comprehensive parameter set exceeds commercial diagnostic tools like NANOCOM, providing professional-level data access including driver input monitoring typically only available to Land Rover technicians.
-
-With over 20 live parameters available, this interface enables:
-- **Real-time Performance Monitoring**: Track boost pressure, injection quantity, and temperatures
-- **Diagnostic Troubleshooting**: Monitor sensor voltages and actuator positions
-- **Fuel Economy Analysis**: Log MAF, injection quantity, and driver demand relationships  
-- **Temperature Management**: Track coolant, fuel, and inlet air temperatures
-- **Turbo System Health**: Monitor boost pressure, wastegate position, and MAP/AAP sensors
-- **Electrical System Status**: Battery voltage and ECU reference voltage monitoring
-
-The comprehensive parameter set matches and exceeds commercial diagnostic tools like NANOCOM, providing professional-level data access for a fraction of the cost.
+Note: Parameter availability may vary by ECU variant (MSB vs NNN series) and vehicle configuration. Not all parameters have been validated across all vehicle types. Do not rely on this tool for critical diagnostics.
 
 ## ECU Compatibility
 
@@ -356,9 +355,7 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **[Cruise Control Wiring Guide](https://www.lrukforums.com/threads/wiring-up-td5-cruise-control.104970/)** - Technical details on clutch and brake switch integration
 - **[Digital Kaos Td5 ECU Repair](https://www.digital-kaos.co.uk/forums/showthread.php/802599-Land-Rover-Defender-TD5-ECU-repair/page2)** - Hardware repair insights
 
-### Commercial Tools Reference
-- **[BlackBox Solutions SM010](https://blackbox-solutions.com/help/SM010.html)** - Professional Lucas Td5 diagnostic specifications
-- **[NANOCOM Diagnostics](https://www.nanocom-diagnostics.com/product/ncom01-defender-td5-kit)** - Commercial Td5 diagnostic tool
+### Community Resources
 - **[DiscoTD5.com Resources](https://www.discotd5.com/c-and-python-odds-and-ends/td5-keygen-now-github)** - Community diagnostic tools and resources
 
 ### Technical Forums & Development
@@ -541,9 +538,24 @@ The structured message format enables sophisticated cruise control implementatio
 
 ## License & Disclaimer
 
-This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for compliance with local laws and vehicle warranty considerations.
+**IMPORTANT**: This is a research project provided for educational purposes only. The protocol implementation is based on reverse-engineering efforts and community research. Accuracy and reliability are not guaranteed.
 
-**Safety Notice**: This interface is designed for diagnostic purposes only. Modifications to ECU parameters should only be performed by qualified technicians with appropriate safety measures.
+**Safety Warning**:
+- DO NOT use this tool for safety-critical diagnostics
+- Parameter readings may be inaccurate
+- ECU communication may fail or provide incorrect data
+- Not validated for production use
+- Users assume all risks when using this software
+- ECU modifications should only be performed by qualified professionals
+- Improper use may damage the ECU or vehicle systems
+
+**Legal Notice**:
+- Users are responsible for compliance with local laws and regulations
+- Vehicle warranty may be voided by using aftermarket diagnostic tools
+- This project is not affiliated with Land Rover or diagnostic tool manufacturers
+- Commercial trademarks are property of their respective owners
+
+**Testing Status**: This project is under active development. Features, PID support, and decoding accuracy are subject to change. Not all features have been tested across all ECU variants.
 
 ## Contributing
 
@@ -559,4 +571,6 @@ For technical support:
 
 ---
 
-*This project builds upon the excellent work of the Land Rover community, particularly the reverse engineering efforts documented in the referenced GitHub projects and forum discussions.*
+**Acknowledgments**: This project builds upon community reverse-engineering efforts documented in various GitHub projects and forum discussions. All findings are subject to verification.
+
+**Project Status**: Testing ongoing - Use at your own risk
