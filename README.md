@@ -2,7 +2,7 @@
 
 A complete Arduino implementation for communicating with pre-2006 Land Rover Td5 engine ECUs via K-Line interface. This project enables real-time extraction of vehicle data including speed, brake pedal status, engine parameters, and diagnostic information using the proprietary ISO 9141-2 protocol at 10400 baud.
 
-## 📡 ESP-NOW Wireless Broadcasting
+## ESP-NOW Wireless Broadcasting
 
 This project now includes **ESP-NOW wireless data broadcasting** capabilities for transmitting all ECU data to multiple recipients without requiring Wi-Fi network infrastructure or MAC address pairing.
 
@@ -10,7 +10,7 @@ This project now includes **ESP-NOW wireless data broadcasting** capabilities fo
 - **`Td5_ECU_Interface.ino`**: Original K-Line interface with serial output
 - **`Td5_ESPNow.ino`**: Enhanced version with ESP-NOW broadcasting capabilities
 
-## 🚗 Overview
+## Overview
 
 The Land Rover Td5 engine ECU uses a non-standard implementation of the ISO 9141-2 protocol that is incompatible with generic OBD2 scanners. This project provides a complete solution for ESP32-based communication, including:
 
@@ -21,7 +21,7 @@ The Land Rover Td5 engine ECU uses a non-standard implementation of the ISO 9141
 - **Complete hardware interface** specifications with L9637D transceiver
 - **ESP-NOW wireless broadcasting** for multiple adaptive cruise control recipients
 
-## 🔧 Hardware Requirements
+## Hardware Requirements
 
 ### Core Components
 - **ESP32 Development Board** (any variant with GPIO 22/23 available)
@@ -39,7 +39,7 @@ The Land Rover Td5 engine ECU uses a non-standard implementation of the ISO 9141
 - **ECU Direct**: Pin B18 (pink wire) on black ECU connector C0658
 - **OBD Port**: Pin 7 (K-Line), Pins 4-5 (Ground), Pin 16 (+12V Battery)
 
-## 📋 Circuit Schematic
+## Circuit Schematic
 
 ```
 ESP32 GPIO 23 ──[1kΩ]── L9637D Pin 5 (TX)
@@ -53,7 +53,7 @@ L9637D Pin 6 (K-Line) ──[510Ω]── +12V
                      └── [27V Zener] ── Ground
 ```
 
-## 🛠 Software Setup
+## Software Setup
 
 ### Arduino IDE Configuration
 1. **Install ESP32 Board Package**:
@@ -78,7 +78,7 @@ L9637D Pin 6 (K-Line) ──[510Ω]── +12V
 3. Click Upload (Ctrl+U)
 4. Open Serial Monitor at 115200 baud for debug output
 
-## 📊 Live Data Output
+## Live Data Output
 
 The interface provides real-time monitoring of over 25 engine parameters and driver inputs:
 
@@ -143,7 +143,7 @@ ACTUATORS - EGR: 8.5%, Wastegate: 0.0%
 - **Communication Health**: Keep-alive status, error detection
 - **Authentication Status**: Security handshake confirmation
 
-## 🔒 Security & Authentication
+## Security & Authentication
 
 The Td5 ECU requires mandatory seed-key authentication before diagnostic access. This implementation uses the reverse-engineered algorithm:
 
@@ -158,7 +158,7 @@ uint16_t calculateTd5Key(uint16_t seed) {
 }
 ```
 
-## 📡 Protocol Implementation
+## Protocol Implementation
 
 ### Communication Specifications
 - **Baud Rate**: 10400 (non-standard, requires software serial)
@@ -172,18 +172,60 @@ uint16_t calculateTd5Key(uint16_t seed) {
 3. **Expected Response**: `0x03 0xC1 0x57 0x8F 0xAA`
 4. **Start Diagnostics**: `0x02 0x10 0xA0 0xB2`
 
-### Live Data Commands
-- **Fuelling Data**: `0x02 0x21 0x20` - Speed, RPM, injection, MAF, throttle position
-- **Input Status**: `0x02 0x21 0x21` - Brake switches, gear position, other inputs  
-- **Temperature Sensors**: `0x02 0x21 0x22` - Coolant, fuel, inlet, ambient temperatures
-- **Pressure Sensors**: `0x02 0x21 0x23` - MAP, AAP, boost calculation, reference voltage
-- **Actuator Positions**: `0x02 0x21 0x24` - EGR throttle, turbo wastegate positions
+### Live Data PID Polling
+
+The implementation uses Service 0x21 (Read Data By Local Identifier) with various PID values. Based on Nanocom traffic analysis, the following PIDs have been validated:
+
+**Simple 2-byte PIDs:**
+- **PID 0x09**: Engine RPM (direct value)
+- **PID 0x0D**: Vehicle Speed (km/h, 1 byte)
+- **PID 0x21**: Digital Inputs (brake/clutch/handbrake switches, gear position)
+
+**Composite Multi-byte PIDs:**
+- **PID 0x1A** (18 bytes): Coolant Temperature (Kelvin×10), MAP (kPa), Boost Pressure (calculated)
+- **PID 0x1B** (12 bytes): Airflow/MAF (g/s), Ambient Pressure (kPa)
+- **PID 0x1C** (11 bytes): Inlet Air Temperature (Kelvin×10), Fuel Temperature (Kelvin×10)
+- **PID 0x10** (6 bytes): Battery Voltage (mV), Reference Voltage (mV)
+- **PID 0x23** (10 bytes): Accelerator Track Positions (little-endian encoding)
+- **PID 0x37** (2 bytes): EGR Position (% × 100)
+- **PID 0x38** (2 bytes): Wastegate Position (% × 100)
+- **PID 0x1E** (composite): Cruise Control & Brake Switches
+- **PID 0x40** (13 bytes): Cylinder Fuel Trim (5 cylinders)
+
+**Decoding Formulas:**
+- Temperatures: `((raw - 2732) / 10)` converts Kelvin×10 to Celsius
+- Battery/Reference Voltage: Raw value in millivolts
+- MAP/Boost: `raw / 100` converts to kPa, boost = `(MAP - 100) kPa`
+- Airflow: `raw / 1000` converts to g/s
+- Ambient Pressure: `raw / 46.94` converts to kPa
+- Actuator Positions: `raw / 100` converts to percentage
 
 ### Critical Implementation Notes
-- **Echo Cancellation**: Half-duplex requires discarding transmitted echoes
+- **Echo Cancellation**: Half-duplex requires intelligent echo filtering (handles partial echoes)
 - **Inter-byte Timing**: 5ms delays improve reliability
-- **Keep-alive Messages**: Required every 1.5 seconds
-- **Response Timeouts**: 2-second windows with retry logic
+- **Keep-alive Messages**: Required every 1.5 seconds (Service 0x3E)
+- **Response Timeouts**: 500ms for composite PIDs (vs 150ms for simple PIDs)
+- **PID Validation**: Only use Nanocom-validated PIDs to avoid ECU rejections
+- **P3 Timing**: Minimum 25ms delay between ECU response and next tester request
+
+### PID Discovery & Validation
+
+The PID list was validated by passively monitoring K-Line traffic between a Nanocom diagnostic tool and the Td5 ECU. This approach identified which PIDs are reliably supported:
+
+**Working PIDs (validated from Nanocom capture):**
+- 0x09, 0x0D, 0x1A, 0x1C, 0x10, 0x1B, 0x21, 0x40, 0x23, 0x37, 0x38, 0x1E, 0x36
+
+**Unreliable PIDs (never used by Nanocom, cause ECU rejections):**
+- 0x07, 0x0A, 0x0B, 0x0F, 0x17, 0x20, 0x2B, 0x2C
+
+The validated PIDs provide complete coverage of all Nanocom display screens (Pages 1-5), including all engine performance parameters, temperatures, pressures, and driver inputs. Using only validated PIDs prevents ECU rejection errors and maintains stable communication.
+
+**Key Findings:**
+- Composite PIDs (0x1A, 0x1B, 0x1C) consolidate multiple parameters in single responses
+- PID 0x23 uniquely uses little-endian byte order (all others are big-endian)
+- Battery voltage moved from unreliable PID 0x17 to composite PID 0x10
+- All temperature data available via composite PIDs 0x1A and 0x1C
+- Polling cycle optimized to match Nanocom timing (50ms between requests)
 
 ### Driver Input Technical Details
 
@@ -238,7 +280,7 @@ With over 20 live parameters available, this interface enables:
 
 The comprehensive parameter set matches and exceeds commercial diagnostic tools like NANOCOM, providing professional-level data access for a fraction of the cost.
 
-## 🏁 ECU Compatibility
+## ECU Compatibility
 
 ### Supported Vehicles
 - **Land Rover Defender** (1998-2006 Td5 engine)
@@ -250,7 +292,7 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **NNN Series** (2002+): Flash programmable, additional service modes
 - **Protocol Identical**: All variants use same 10400 baud ISO 9141-2
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 - **No ECU Response**: Check K-Line connections, verify +12V power, ensure proper grounding
@@ -287,7 +329,7 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - Use multimeter to verify K-Line voltage levels: 0V (LOW) and 12V (HIGH)
 - Check message checksums if getting negative responses from ECU
 
-## 📚 Technical References
+## Technical References
 
 ### Primary Research Sources
 - **[EA2EGA/Ekaitza_Itzali](https://github.com/EA2EGA/Ekaitza_Itzali)** - Complete Td5 diagnostic tool implementation
@@ -324,7 +366,7 @@ The comprehensive parameter set matches and exceeds commercial diagnostic tools 
 - **[STMicroelectronics L9637D Community](https://community.st.com/t5/autodevkit-ecosystem/l9637d-k-line-transceiver-lo-pin-functionality/td-p/638515)** - L9637D implementation discussions
 - **[K-Line Reader Projects](https://github.com/muki01/OBD2_K-line_Reader)** - Additional K-Line implementation examples
 
-## 📡 ESP-NOW Data Broadcasting Schema
+## ESP-NOW Data Broadcasting Schema
 
 ### Message Types and Structure
 
@@ -497,17 +539,17 @@ The structured message format enables sophisticated cruise control implementatio
 - **Range Issues**: Consider ESP32 variant (some have better RF performance)
 - **Checksum Errors**: Check for interference or power supply noise
 
-## 📄 License & Disclaimer
+## License & Disclaimer
 
 This project is provided for educational and research purposes. The reverse-engineered protocol implementation is based on community research and open-source projects. Users are responsible for compliance with local laws and vehicle warranty considerations.
 
 **Safety Notice**: This interface is designed for diagnostic purposes only. Modifications to ECU parameters should only be performed by qualified technicians with appropriate safety measures.
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests. When contributing, please reference the technical sources listed above and maintain compatibility with the existing protocol implementation.
 
-## 📞 Support
+## Support
 
 For technical support:
 1. Check the troubleshooting section above
