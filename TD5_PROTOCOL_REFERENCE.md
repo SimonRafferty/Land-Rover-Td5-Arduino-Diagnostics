@@ -1,6 +1,5 @@
 # Land Rover Td5 ECU K-Line Protocol Reference
 
-**Reverse-engineered from Nanocom diagnostic tool traffic**
 **Last Updated:** 2025-01-11
 
 ## Decoding Status Summary
@@ -18,7 +17,6 @@
 - ⚠️ 0x1B (Airflow, Ambient Pressure - **6 unknown bytes**)
 - ⚠️ 0x1C (Inlet Air Temp, Fuel Temp - **5 unknown bytes**)
 
-**All Nanocom Page 1-5 values successfully decoded!**
 
 ## Table of Contents
 1. [Physical Layer](#physical-layer)
@@ -340,7 +338,6 @@ These PIDs return multiple parameters in a single response.
 
 ### PID 0x1A: Multi-Parameter (18 bytes)
 
-**Discovered from Nanocom** - **PARTIALLY DECODED** ✓
 
 ```
 Response: 12|61|1A|[DATA: 15 bytes]|CHK
@@ -363,14 +360,13 @@ Response: 12|61|1A|0D|6E|02|BA|0B|94|0A|B5|0B|74|0B|61|0D|2C|04|69|B3
 ```
 
 **Validation:**
-- Nanocom Page 1: **Coolant: 70.5°C** → Decoded: **70.6°C** ✓
-- Nanocom Page 1: **Turbo Pressure: 0.02 Bar** → Boost calculation confirmed ✓
+- Page 1: **Coolant: 70.5°C** → Decoded: **70.6°C** ✓
+- Page 1: **Turbo Pressure: 0.02 Bar** → Boost calculation confirmed ✓
 
 **Remaining Unknown Fields:** Bytes 7-18 (under investigation)
 
 ### PID 0x1B: Fuel/Air Composite (12 bytes)
 
-**Discovered from Nanocom** - **PARTIALLY DECODED** ✓
 
 ```
 Response: 0C|61|1B|[DATA: 9 bytes]|CHK
@@ -393,14 +389,12 @@ Response: 0C|61|1B|02|81|11|44|12|3B|00|00|13|88|48
 ```
 
 **Validation:**
-- Nanocom Page 2: **Airflow: 4.4 g/s** → Decoded: **4.42 g/s** ✓
-- Nanocom Page 2: **Ambient Pressure: 99.47 kPa** → Decoded: **99.4 kPa** ✓
+- Page 2: **Airflow: 4.4 g/s** → Decoded: **4.42 g/s** ✓
+- Page 2: **Ambient Pressure: 99.47 kPa** → Decoded: **99.4 kPa** ✓
 
 **Remaining Unknown Fields:** Bytes 3-4, 9-10, 11-12
 
 ### PID 0x1C: Temperature Composite (10 bytes)
-
-**Discovered from Nanocom** - **PARTIALLY DECODED** ⚠️
 
 ```
 Response: 0A|61|1C|[UNK]|[INLET]|[UNK]|[UNK]|[FUEL_H]|[FUEL_L]|[UNK]|[UNK]|CHK
@@ -428,8 +422,8 @@ Response: 0A|61|1C|27|E9|28|06|00|2C|00|20|F3
                     +------------------------ Unknown (0x27)
 ```
 
-**Validation Against Nanocom:**
-- Nanocom displayed: **Inlet Air: 23.2°C, Fuel: 64.0°C**
+**Validation Against captured data:**
+- Displayed: **Inlet Air: 23.2°C, Fuel: 64.0°C**
 - Decoded values: **Inlet Air: 23.3°C** ✓, **Fuel: 44°C** (different sample)
 
 **Temperature Offset Rationale:**
@@ -437,7 +431,6 @@ The +20°C offset on fuel temperature allows representation of temperatures down
 
 ### PID 0x10: Battery Voltage (6 bytes)
 
-**Discovered from Nanocom** - **FULLY DECODED** ✓
 
 ```
 Response: 06|61|10|[BATT: 2 bytes]|[REF: 2 bytes]|CHK
@@ -460,12 +453,12 @@ Response: 06|61|10|36|43|36|39|5F
 ```
 
 **Validation:**
-- Nanocom Page 1: **Battery Voltage: 14.1V** → Range confirmed ✓
+- Page 1: **Battery Voltage: 14.1V** → Range confirmed ✓
 - Both values track battery voltage closely (main + reference)
 
 ### PID 0x23: Accelerator Position Tracks (6 bytes)
 
-**Discovered from Nanocom** - **FULLY DECODED** ✓
+**Discovered from Captured data** - **FULLY DECODED** ✓
 
 ```
 Response: 06|61|23|[TRACK1: 2 bytes]|[TRACK2: 2 bytes]|CHK
@@ -499,11 +492,10 @@ Response: 06|61|23|27|0F|27|10|F7
 
 **Validation:**
 - Track voltages should sum to approximately 5V (supply voltage)
-- Nanocom Page 4 data confirmed with little-endian interpretation ✓
+
 
 ### PID 0x40: Cylinder Fuel Trim (12 bytes)
 
-**Discovered from Nanocom** - **FULLY DECODED** ✓
 
 ```
 Response: 0C|61|40|[CYL1]|[CYL2]|[CYL3]|[CYL4]|[CYL5]|CHK
@@ -519,10 +511,6 @@ Response: 0C|61|40|00|02|00|00|FF|FD|00|04|FF|FD|AB
                     +2    0     -3    +4    -3
 ```
 
-Matches Nanocom display: **Cyl1:3, Cyl2:-3, Cyl3:-4, Cyl4:-3, Cyl5:1** ✓
-(Note: Minor variance likely due to engine running, values change continuously)
-
----
 
 ## Timing Requirements
 
@@ -547,9 +535,6 @@ Response: 01|7E|7F
 ```
 
 **Critical:** If keep-alive not sent within ~2 seconds, ECU will terminate the diagnostic session and require re-initialization.
-
-### Nanocom Observed Polling Pattern
-From traffic capture, Nanocom polls in this order with ~100ms between each request:
 
 **Page 1 (Basic):**
 1. 0x09 (RPM)
@@ -627,18 +612,15 @@ The temperature values in PID 0x1C use different encoding than the standard Kelv
 
 **Status:** Inlet air and fuel temps decoded ✓, other fields need investigation
 
-### 4. Authentication Not Always Required
-The ECU sometimes allows read-only access (service 0x21) without completing the seed-key authentication.
 
-**Observation:** Authentication may be required only for write operations or certain advanced PIDs.
 
 ---
 
 ## Protocol Reverse Engineering Credits
 
 - **Seed-Key Algorithm**: [pajacobson/td5keygen](https://github.com/pajacobson/td5keygen)
-- **Composite PIDs**: Discovered via passive sniffing of Nanocom traffic
-- **Accelerator Tracks & Cylinder Trim**: Fully decoded from Nanocom capture
+- **Composite PIDs**: Discovered 
+- **Accelerator Tracks & Cylinder Trim**: Fully decoded
 
 ---
 
@@ -647,4 +629,3 @@ The ECU sometimes allows read-only access (service 0x21) without completing the 
 - ISO 9141-2 K-Line Protocol Standard
 - ISO 14230 (KWP2000) - Similar diagnostic protocol
 - L9637D K-Line Transceiver Datasheet
-- Nanocom Live Data Captures (2025-01-10)
