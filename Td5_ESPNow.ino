@@ -39,10 +39,11 @@
  *   - ALL decoded Td5 PIDs are BIG-ENDIAN (no PID is little-endian).
  *   - The genuine MAF/airflow PID is currently UNKNOWN.
  *
- * NOTE: The in-file decode below for 0x1B and 0x23 still uses the OLD
- * interpretation (0x1B as airflow/ambient, 0x23 as little-endian tracks).
- * It is left unchanged for behavioural compatibility; treat the decoded
- * values accordingly. See TD5_PROTOCOL_REFERENCE.md for the corrected decode.
+ * The decode below now implements this corrected map: 0x1B -> accelerator
+ * (Track 1 mapped to driver-demand %), 0x23 -> ambient pressure, switches read
+ * from 0x1E, and 0x21 is treated as a no-op. Because there is no known MAF PID,
+ * the FUELLING message's manifoldAirFlow field stays 0. See
+ * TD5_PROTOCOL_REFERENCE.md for the full decode.
  * ============================================================================
  */
 
@@ -1335,20 +1336,20 @@ void requestLiveData() {
       0x09,  // RPM (critical)
       0x0D,  // Speed (critical)
       0x1A,  // Coolant temp, MAP, Boost pressure (composite)
-      0x21,  // Digital Inputs - brake/clutch (high)
+      0x1E,  // Input switches - brake/clutch/cruise/AC (composite)
       0x09,  // RPM (critical repeat)
       0x1C,  // Inlet Air + Fuel Temp (composite)
       0x0D,  // Speed (critical repeat)
       0x10,  // Battery Voltage (composite)
       0x09,  // RPM (critical repeat)
-      0x1B,  // Airflow + Ambient Pressure (composite)
-      0x21,  // Digital Inputs (high repeat)
+      0x1B,  // Accelerator pedal tracks -> driver demand (composite, big-endian)
+      0x1E,  // Input switches (repeat)
       0x09,  // RPM (critical repeat)
       0x0D,  // Speed (critical repeat)
       0x38,  // Wastegate Position
       0x37,  // EGR Position
-      0x1E,  // Cruise Control & Brake Switches
-      0x23,  // Accelerator position tracks (little-endian, composite)
+      0x1E,  // Input switches (composite)
+      0x23,  // Ambient / barometric pressure (composite, big-endian)
       0x40,  // Cylinder fuel trim (composite)
     };
     sequenceLength = sizeof(defaultSequence);
@@ -1560,23 +1561,20 @@ void processECUResponse(uint8_t* data, int length) {
           }
           return;  // Composite handled, exit
 
-        case 0x1B:  // Composite Fuel/Air (12 bytes expected)
-          // NOTE (2026-09): PID 0x1B is actually the ACCELERATOR PEDAL TRACKS
-          // (big-endian, raw/1000 = volts), NOT airflow/ambient. The decode
-          // below is the OLD interpretation, kept for compatibility - do not
-          // trust these values as airflow/ambient. See file-top correction block.
-          if (length >= 7) {
-            // Bytes 5-6: Airflow (g/s)
-            uint16_t airflowRaw = (data[5] << 8) | data[6];
-            manifoldAirFlow = airflowRaw / 100;  // Convert g/s to kg/h*10 for storage
+        case 0x1B:  // Accelerator pedal tracks (big-endian, raw/1000 = volts) - CORRECTED
+          // PID 0x1B is the accelerator pedal, NOT airflow/ambient (vehicle-verified
+          // against Nanocom). Track 1 (bytes 3-4) rises with the pedal, Track 2 (5-6)
+          // falls, Track 3 (7-8) on 3-track pedals, 5V supply (11-12). There is no
+          // known MAF PID, so manifoldAirFlow is left 0; ambient is PID 0x23.
+          if (length >= 5) {
+            uint16_t track1mV = (data[3] << 8) | data[4];   // Track 1, big-endian, mV
+            // Map Track 1 (~640 mV idle .. ~4700 mV full) to a 0-100% driver demand.
+            long pct = ((long)track1mV - 640) * 100 / (4700 - 640);
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            driverDemand = (uint16_t)(pct * 100);           // stored as % * 100
             validFuellingData = true;
             lastECUDataReceived = millis();
-          }
-          if (length >= 9) {
-            // Bytes 7-8: Ambient Pressure (raw / 46.94 = kPa)
-            uint16_t ambientRaw = (data[7] << 8) | data[8];
-            ambientPressure = ambientRaw / 47;  // Approximate: /46.94 ≈ /47
-            validPressuresData = true;
           }
           return;  // Composite handled, exit
 
@@ -1609,17 +1607,16 @@ void processECUResponse(uint8_t* data, int length) {
           }
           return;  // Composite handled, exit
 
-        case 0x23:  // Accelerator Tracks (LITTLE-ENDIAN, 10 bytes expected)
+        case 0x23:  // Ambient / barometric pressure (big-endian, raw/100 = kPa) - CORRECTED
+          // PID 0x23 is ambient pressure, big-endian - NOT the accelerator, and NOT
+          // little-endian (vehicle-verified against Nanocom). The accelerator is 0x1B.
           if (length >= 5) {
-            // Bytes 3-4: Track 1 (LITTLE-ENDIAN!)
-            uint16_t track1 = (data[4] << 8) | data[3];
-            // Track value stored but not used in ESP-NOW (could add to fuelling data)
+            uint16_t ambientRaw = (data[3] << 8) | data[4];
+            ambientPressure = ambientRaw / 100;             // kPa
+            // Recompute boost now that ambient has a real source.
+            boostPressure = (int16_t)manifoldPressure - (int16_t)ambientPressure;
+            validPressuresData = true;
             lastECUDataReceived = millis();
-          }
-          if (length >= 7) {
-            // Bytes 5-6: Track 2 (LITTLE-ENDIAN!)
-            uint16_t track2 = (data[6] << 8) | data[5];
-            // Track value stored but not used in ESP-NOW
           }
           return;  // Composite handled, exit
 
@@ -1650,15 +1647,18 @@ void processECUResponse(uint8_t* data, int length) {
           }
           return;  // Composite handled, exit
 
-        case 0x1E:  // Cruise Control & Brake Switches (composite)
+        case 0x1E:  // Input switches (CONFIRMED bit map) - DB1=data[3], DB2=data[4]
+          // Vehicle-verified. Switches are normally-open, active-low at rest.
+          // There is NO handbrake bit - the Td5 ECU does not receive the handbrake.
           if (length >= 5) {
-            uint8_t inputByte1 = data[3];
-            uint8_t inputByte2 = data[4];
-
-            // Decode switches (similar to 0x21)
-            brakePedalPressed = (inputByte1 & 0x01) == 0;    // INVERTED
-            cruiseBrakePressed = (inputByte1 & 0x02) == 0;   // INVERTED
-            cruiseControlOn = (inputByte1 & 0x20) != 0;
+            uint8_t db1 = data[3];
+            uint8_t db2 = data[4];
+            brakePedalPressed  = (db2 & 0x80) == 0;   // DB2 bit7, main brake (active-low)
+            cruiseBrakePressed = (db1 & 0x01) == 0;   // DB1 bit0, second brake circuit (active-low)
+            clutchPedalPressed = (db1 & 0x02) == 0;   // DB1 bit1 (active-low)
+            cruiseControlOn    = (db1 & 0x04) != 0;   // DB1 bit2 cruise master
+            airConRequest      = (db2 & 0x08) != 0;   // DB2 bit3 A/C clutch request
+            handbrakeEngaged   = false;               // no handbrake signal exists on the Td5
             validInputsData = true;
             lastECUDataReceived = millis();
           }
@@ -1689,23 +1689,11 @@ void processECUResponse(uint8_t* data, int length) {
             lastECUDataReceived = millis();
             break;
 
-          case 0x21:  // Digital Inputs (switches)
-            if (length >= 5) {
-              uint8_t inputByte1 = data[3];
-              uint8_t inputByte2 = data[4];
-
-              brakePedalPressed = (inputByte1 & 0x01) == 0;    // INVERTED
-              cruiseBrakePressed = (inputByte1 & 0x02) == 0;   // INVERTED
-              clutchPedalPressed = (inputByte1 & 0x04) == 0;   // INVERTED
-              handbrakeEngaged = (inputByte1 & 0x08) != 0;
-              airConRequest = (inputByte1 & 0x10) != 0;
-              cruiseControlOn = (inputByte1 & 0x20) != 0;
-              neutralSelected = (inputByte1 & 0x40) != 0;
-              gearPosition = inputByte2 & 0x0F;
-
-              validInputsData = true;
-              lastECUDataReceived = millis();
-            }
+          case 0x21:  // NOT switches - CORRECTED
+            // PID 0x21 does NOT carry the input switches (vehicle-verified: it returns
+            // small idle-error-like values). The real switches are on PID 0x1E, decoded
+            // above. Left as a no-op acknowledgement - do not decode 0x21 as switches.
+            lastECUDataReceived = millis();
             break;
         }
       }
