@@ -107,6 +107,8 @@ Bit 0: Brake pedal (1=pressed)
 
 **Example:** `switchStates = 0x09` means brake pedal pressed (bit 0) and handbrake engaged (bit 3).
 
+> **Note (2026-09 correction):** The handbrake bit (bit 3) never has a valid source — the Td5 ECU does not report the handbrake, so on-vehicle this bit is always inactive. Also, the FUELLING `manifoldAirFlow`/"airflow" figure was mis-sourced: the true MAF PID is currently unknown, and the data previously read as airflow is actually the **accelerator pedal tracks on PID 0x1B** (not the ambient-pressure PID 0x23). The confirmed switch source is PID 0x1E. The message struct layout below is unchanged for wire-format compatibility.
+
 ### 3. TEMPERATURES Data (0x03)
 
 Engine and ambient temperature sensors plus battery voltage.

@@ -180,29 +180,31 @@ uint16_t calculateTd5Key(uint16_t seed) {
 
 The implementation uses Service 0x21 (Read Data By Local Identifier) with various PID values. Based on passive monitoring of K-Line traffic from commercial diagnostic tools, the following PIDs appear to be supported:
 
+> **Correction (2026-09, confirmed on-vehicle vs Nanocom):** PID 0x1B is the **accelerator pedal tracks** (big-endian, raw/1000 V), NOT airflow/ambient. PID 0x23 is **ambient/barometric pressure** (big-endian, raw/100 kPa), NOT little-endian accelerator tracks — no Td5 PID is little-endian. The switches are on **PID 0x1E, not 0x21** (0x21 returns small idle-error-like values, function uncertain). There is **no handbrake** signal from the ECU. The true MAF/airflow PID is unknown.
+
 **Simple 2-byte PIDs:**
 - **PID 0x09**: Engine RPM (direct value)
 - **PID 0x0D**: Vehicle Speed (km/h, 1 byte)
-- **PID 0x21**: Digital Inputs (brake/clutch/handbrake switches, gear position)
+- **PID 0x21**: NOT switches — returns small idle-error-like values (function uncertain). Switches are on PID 0x1E.
 
 **Composite Multi-byte PIDs:**
 - **PID 0x1A** (18 bytes): Coolant Temperature (Kelvin×10), MAP (kPa), Boost Pressure (calculated)
-- **PID 0x1B** (12 bytes): Airflow/MAF (g/s), Ambient Pressure (kPa)
+- **PID 0x1B** (12 bytes): Accelerator Pedal Tracks (Track 1-4 + 5V supply, big-endian, raw/1000 V)
 - **PID 0x1C** (11 bytes): Inlet Air Temperature (Kelvin×10), Fuel Temperature (Kelvin×10)
 - **PID 0x10** (6 bytes): Battery Voltage (mV), Reference Voltage (mV)
-- **PID 0x23** (10 bytes): Accelerator Track Positions (little-endian encoding)
+- **PID 0x23** (6 bytes): Ambient/Barometric Pressure (big-endian, raw/100 kPa)
 - **PID 0x37** (2 bytes): EGR Position (% × 100)
 - **PID 0x38** (2 bytes): Wastegate Position (% × 100)
-- **PID 0x1E** (composite): Cruise Control & Brake Switches
-- **PID 0x40** (13 bytes): Cylinder Fuel Trim (5 cylinders)
+- **PID 0x1E** (composite): Input Switches (brake/clutch/cruise/AC/transfer box)
+- **PID 0x40** (13 bytes): Per-cylinder Injector Fuel Trim (5 cylinders, signed)
 
 **Decoding Formulas:**
 - Temperatures: `((raw - 2732) / 10)` converts Kelvin×10 to Celsius
 - Battery/Reference Voltage: Raw value in millivolts
 - MAP: `raw / 100` converts to kPa
 - Boost Pressure: `(MAP - 100) / 100` converts to Bar (relative to atmospheric)
-- Airflow: `raw / 1000` converts to g/s
-- Ambient Pressure: `raw / 46.94` converts to kPa
+- Accelerator tracks (PID 0x1B): `raw / 1000` converts to volts (big-endian)
+- Ambient Pressure (PID 0x23): `raw / 100` converts to kPa (big-endian)
 - Actuator Positions: `raw / 100` converts to percentage
 
 Note: These formulas have been validated against known values from commercial diagnostic tools, though accuracy may vary by ECU variant.
@@ -229,7 +231,7 @@ Based on limited testing, using PIDs observed in captured traffic appears to red
 
 **Preliminary Observations:**
 - Some PIDs (0x1A, 0x1B, 0x1C) appear to return multiple parameters in single responses
-- PID 0x23 may use little-endian byte order (unlike other PIDs which appear big-endian)
+- **All decoded Td5 PIDs are big-endian** (an earlier note claiming PID 0x23 was little-endian was wrong; 0x23 is big-endian ambient pressure)
 - Battery voltage data seems more reliable from PID 0x10 than 0x17 in initial tests
 - Temperature data appears available via PIDs 0x1A and 0x1C
 - Polling delay of ~50ms between requests observed in captured traffic
@@ -404,12 +406,14 @@ struct Td5InputsData {
 // Bit 0: Brake pedal (1=pressed)
 // Bit 1: Cruise brake (1=pressed)
 // Bit 2: Clutch pedal (1=pressed)
-// Bit 3: Handbrake (1=engaged)
+// Bit 3: Handbrake (1=engaged)   // NOTE: no valid ECU source - see below
 // Bit 4: A/C request (1=on)
 // Bit 5: Cruise control (1=on)
 // Bit 6: Neutral switch (1=selected)
 // Bit 7: Reserved
 ```
+
+> **Note (2026-09 correction):** The ESP-NOW `switchStates` handbrake bit (bit 3) has **no valid ECU source** — the Td5 ECU does not report the handbrake signal, so this bit is always inactive. The confirmed switch source is PID 0x1E (not 0x21). The field/layout is retained for wire-format compatibility.
 
 **3. TEMPERATURES Data (0x03) - 10 bytes payload**
 ```c

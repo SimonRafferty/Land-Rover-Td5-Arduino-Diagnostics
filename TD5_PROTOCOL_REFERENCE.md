@@ -1,20 +1,30 @@
 # Land Rover Td5 ECU K-Line Protocol Reference
 
-**Last Updated:** 2025-01-11
+**Last Updated:** 2026-09-11
+
+> **2026-09 revision — corrections (confirmed on-vehicle, cross-checked against a Nanocom):**
+> - **PID 0x1B is Accelerator Pedal Tracks**, not airflow/ambient pressure. It is **big-endian**, raw/1000 = volts. (The old "airflow 4.42 g/s" reading was actually pedal Track 2's 4.420 V.)
+> - **PID 0x23 is Ambient / barometric pressure** (big-endian, raw/100 = kPa), **NOT** little-endian accelerator tracks. **No Td5 PID uses little-endian** — all decoded PIDs are big-endian.
+> - **The input switches are on PID 0x1E, not 0x21.** PID 0x21 does NOT return switches (see its section).
+> - **There is no handbrake bit.** The Td5 ECU does not receive the handbrake signal (Nanocom shows none either).
+> - The genuine MAF/airflow PID is currently **UNKNOWN** (it was mis-attributed to 0x1B).
 
 ## Decoding Status Summary
 
 **Fully Decoded PIDs:**
-- ✓ 0x09 (RPM), 0x0D (Speed), 0x21 (Digital Inputs)
+- ✓ 0x09 (RPM), 0x0D (Speed)
 - ✓ 0x10 (Battery Voltage - main + reference)
-- ✓ 0x23 (Accelerator Tracks - **little-endian**)
-- ✓ 0x1E (Cruise/Brake Switches)
+- ✓ 0x1B (Accelerator Pedal Tracks - **big-endian**, raw/1000 V)
+- ✓ 0x23 (Ambient/Barometric Pressure - **big-endian**, raw/100 kPa)
+- ✓ 0x1E (Input Switches - brake/clutch/cruise/AC/transfer-box)
 - ✓ 0x37 (EGR Position), 0x38 (Wastegate Position)
-- ✓ 0x40 (Cylinder Fuel Trim - 5 cylinders)
+- ✓ 0x40 (Per-cylinder Injector Fuel Trim - 5 cylinders, signed)
+
+**Uncertain / Not Switches:**
+- ⚠️ 0x21 — NOT switches; returns small idle-error-like values (function uncertain). Switches are on 0x1E.
 
 **Partially Decoded PIDs:**
 - ⚠️ 0x1A (Coolant, MAP, Boost - **9 unknown bytes**)
-- ⚠️ 0x1B (Airflow, Ambient Pressure - **6 unknown bytes**)
 - ⚠️ 0x1C (Inlet Air Temp, Fuel Temp - **5 unknown bytes**)
 
 
@@ -253,82 +263,41 @@ Response: 04|61|09|02|E8|57
 |------|------|----------------|-----------|---------|------|---------|
 | 0x09 | Engine RPM | 5 bytes | uint16 BE | raw | RPM | 0x02E8 = 744 RPM |
 | 0x0D | Vehicle Speed | 4 bytes | uint8 | raw | km/h | 0x00 = 0 km/h |
-| 0x1E | Cruise/Brake Switches | 5 bytes | 2× uint8 | bitfield | flags | See below |
-| 0x21 | Digital Inputs | 5 bytes | 2× uint8 | bitfield | flags | See below |
+| 0x1E | Input Switches | 6 bytes | 2× uint8 | bitfield | flags | See below (brake/clutch/cruise/AC/transfer box) |
+| 0x21 | NOT switches (function uncertain) | 5 bytes | uint16 BE | raw | ? | 0x0000-0x0009 / 0xFFFF; switches are on 0x1E |
 | 0x36 | Unknown Status | 5 bytes | uint16 BE | raw | ? | 0x0005 (constant) |
 | 0x37 | EGR Position | 5 bytes | uint16 BE | raw / 100 | % | 0x0000 = 0.00% |
 | 0x38 | Wastegate Position | 5 bytes | uint16 BE | raw / 100 | % | 0x0000 = 0.00% |
 
-#### PID 0x21: Digital Inputs Bitfield
+#### PID 0x21: NOT the switch bitfield
 
-**Byte 1 (data[3]):**
+**Corrected 2026-09 (on-vehicle):** PID 0x21 does **not** carry the driver-input switches. On the vehicle it returns small idle-error-like values (0x0000–0x0009, occasionally 0xFFFF) that do not track brake, clutch, cruise, A/C or gear. Its function is uncertain. **The switches are on PID 0x1E** (see below). A Nanocom does not read switches from 0x21 either.
+
+#### PID 0x1E: Input Switches Bitfield (CONFIRMED)
+
+**Corrected 2026-09 (on-vehicle, cross-checked against Nanocom).**
+
+Response: `04|61|1E|DB1|DB2|CHK`, where **DB1 = data[3]** and **DB2 = data[4]**.
+Switches are normally-open and pulled high at rest, so they are **active-low** (0 = pressed/active) unless noted otherwise.
+
+**DB1 (data[3]):**
 | Bit | Signal | Logic |
 |-----|--------|-------|
-| 0 | Brake Pedal | INVERTED (0=pressed) |
-| 1 | Cruise Brake | INVERTED (0=pressed) |
-| 2 | Clutch Pedal | INVERTED (0=pressed) |
-| 3 | Handbrake | Normal (1=engaged) |
-| 4 | A/C Request | Normal (1=on) |
-| 5 | Cruise Control | Normal (1=active) |
-| 6 | Neutral Switch | Normal (1=neutral) |
-| 7 | Reserved | - |
+| 0 | Brake 2 (second circuit) | active-low (0=pressed) |
+| 1 | Clutch | active-low (0=pressed) **CONFIRMED** |
+| 2 | Cruise master | active-low |
+| 3 | Cruise Set/Accelerate | active-low |
+| 4 | Cruise Resume | active-low |
 
-**Byte 2 (data[4]):**
-- Lower nibble: Gear position (auto transmission)
-
-**Example Response:**
-```
-04|61|21|00|05|8B
-          ^^  ^^
-          |   +--- Gear info
-          +------- 0x00 = All switches off except bit pattern suggests brake ON
-```
-
-#### PID 0x1E: Cruise Control & Brake Switches Bitfield
-
-**Byte 1 (data[3]):**
+**DB2 (data[4]):**
 | Bit | Signal | Logic |
 |-----|--------|-------|
-| 3 | Cruise Button Active | Normal (1=button pressed) |
-| Other bits | Unknown | - |
+| 2 | A/C fan request | active-low |
+| 3 | A/C clutch request | active-low |
+| 6 | Transfer box ratio | 1 = LOW range, 0 = HIGH range |
+| 7 | Brake main | active-low (0=pressed) **CONFIRMED** |
 
-**Byte 2 (data[4]):**
-| Bit | Signal | Logic |
-|-----|--------|-------|
-| 7 | Brake Pedal | INVERTED (0=pressed) |
-| 5 | Handbrake/Cruise Type | Ambiguous (needs more testing) |
-
-**Observations:**
-- Byte 3 toggles between 0x04 (cruise button released) and 0x0C (cruise button pressed)
-- Byte 4 bit 7 inverted: 0xA2 (brake released), 0x22 (brake pressed)
-- Byte 4 bit 5 correlation unclear: toggles with handbrake or cruise button type
-
-**Example Responses:**
-```
-Handbrake Applied:       04|61|1E|04|A2
-                                  ^^  ^^
-                                  |   +--- 0xA2: brake off, bit 5 set
-
-Brake Pressed:           04|61|1E|04|22
-                                  ^^  ^^
-                                  |   +--- 0x22: brake on, bit 5 clear
-
-Cruise Resume Pressed:   04|61|1E|0C|A2
-                                  ^^  ^^
-                                  |   +--- 0x0C: cruise btn active
-                                  +------- 0xA2: brake off, bit 5 set
-
-Cruise Set Pressed:      04|61|1E|0C|82
-                                  ^^  ^^
-                                  |   +--- 0x82: brake off, bit 5 clear
-                                  +------- 0x0C: cruise btn active
-
-Handbrake Released:      04|61|1E|04|82
-                                  ^^  ^^
-                                  +--- 0x04: cruise btn off, 0x82: bit 5 clear
-```
-
-**Note:** The function of bit 5 in byte 2 requires additional testing. It appears to toggle between cruise SET/RESUME or correlate with handbrake state, but the pattern is not fully confirmed.
+**No handbrake bit exists.** The Td5 ECU does not receive the handbrake signal. The DB2 bit 5 that older notes labelled "handbrake" is actually part of the cruise Set/Resume state, not the handbrake.
 
 ---
 
@@ -365,34 +334,37 @@ Response: 12|61|1A|0D|6E|02|BA|0B|94|0A|B5|0B|74|0B|61|0D|2C|04|69|B3
 
 **Remaining Unknown Fields:** Bytes 7-18 (under investigation)
 
-### PID 0x1B: Fuel/Air Composite (12 bytes)
+### PID 0x1B: Accelerator Pedal Tracks (12 bytes)
 
+**Corrected 2026-09 (on-vehicle, cross-checked against Nanocom).** This PID was previously mis-decoded as "airflow / ambient pressure" — it is actually the accelerator pedal tracks. **Big-endian, raw / 1000 = volts.** The old "airflow 4.42 g/s" was really Track 2's 4.420 V; the "ambient 99.4 kPa via raw/46.94" was a coincidental mis-scaling.
 
 ```
-Response: 0C|61|1B|[DATA: 9 bytes]|CHK
+Response: 0C|61|1B|[DATA: 10 bytes]|CHK
 ```
 
-**Decoded Fields:**
+**Decoded Fields:** (all big-endian, `raw / 1000` = volts)
 
 | Offset | Size | Field | Formula | Unit | Notes |
 |--------|------|-------|---------|------|-------|
-| 5-6 | 2 bytes | Airflow (MAF) | raw / 1000 | g/s | Big-endian |
-| 7-8 | 2 bytes | Ambient Pressure | raw / 46.94 | kPa | Big-endian |
+| 3-4 | 2 bytes | Accelerator Track 1 | raw / 1000 | V | Rises with pedal (~0.64 V idle) |
+| 5-6 | 2 bytes | Accelerator Track 2 | raw / 1000 | V | Falls with pedal (~4.42 V idle); Track1+Track2 ≈ supply |
+| 7-8 | 2 bytes | Accelerator Track 3 | raw / 1000 | V | ~4.47 V idle; live on 3-track pedals |
+| 9-10 | 2 bytes | Accelerator Track 4 | raw / 1000 | V | 0 on pedals without a 4th pot |
+| 11-12 | 2 bytes | Sensor 5 V supply | raw / 1000 | V | 0x1388 = 5.000 V |
 
 **Example:**
 ```
 Request:  02|21|1B|3E
-Response: 0C|61|1B|02|81|11|44|12|3B|00|00|13|88|48
+Response: 0C|61|1B|02|81|11|44|11|5F|00|00|13|88|48
                     ^^^^^ ^^^^^ ^^^^^ ^^^^^ ^^^^^
-                    0x0281 Airflow: 4.42 g/s
-                          0x1144 Ambient: 99.4 kPa
+                    0x0281 Track 1: 0.641 V (idle)
+                          0x1144 Track 2: 4.420 V (idle)
+                                0x115F Track 3: 4.447 V
+                                      0x0000 Track 4: 0 V (no 4th pot)
+                                            0x1388 Supply: 5.000 V
 ```
 
-**Validation:**
-- Page 2: **Airflow: 4.4 g/s** → Decoded: **4.42 g/s** ✓
-- Page 2: **Ambient Pressure: 99.47 kPa** → Decoded: **99.4 kPa** ✓
-
-**Remaining Unknown Fields:** Bytes 3-4, 9-10, 11-12
+**Note:** The genuine MAF/airflow PID is currently UNKNOWN (it was mistakenly read from this PID).
 
 ### PID 0x1C: Temperature Composite (10 bytes)
 
@@ -456,51 +428,46 @@ Response: 06|61|10|36|43|36|39|5F
 - Page 1: **Battery Voltage: 14.1V** → Range confirmed ✓
 - Both values track battery voltage closely (main + reference)
 
-### PID 0x23: Accelerator Position Tracks (6 bytes)
+### PID 0x23: Ambient / Barometric Pressure (6 bytes)
 
-**Discovered from Captured data** - **FULLY DECODED** ✓
+**Corrected 2026-09 (on-vehicle, cross-checked against Nanocom).** This PID was previously mis-decoded as "accelerator tracks, little-endian." It is actually **ambient/barometric pressure, and it is BIG-ENDIAN** like every other Td5 PID — there is no little-endian PID. The accelerator tracks are on **PID 0x1B**.
 
 ```
-Response: 06|61|23|[TRACK1: 2 bytes]|[TRACK2: 2 bytes]|CHK
+Response: 06|61|23|[PRESSURE: 2 bytes]|...|CHK
 ```
 
-**CRITICAL: Little-endian byte order** (unlike most other PIDs)
-
-**Decoded Fields:**
+**Decoded Fields:** (big-endian, `raw / 100` = kPa)
 
 | Offset | Size | Field | Formula | Unit | Notes |
 |--------|------|-------|---------|------|-------|
-| 3-4 | 2 bytes | Accelerator Track 1 | raw / 10000 × 5 | V | **LITTLE-ENDIAN** |
-| 5-6 | 2 bytes | Accelerator Track 2 | raw / 10000 × 5 | V | **LITTLE-ENDIAN** |
+| 3-4 | 2 bytes | Ambient / Barometric Pressure | raw / 100 | kPa | Big-endian |
 
 **Formula:**
 ```cpp
-// LITTLE-ENDIAN!
-uint16_t track1 = (data[4] << 8) | data[3];  // NOT data[3] << 8 | data[4]
-float voltage = track1 / 10000.0 * 5.0;
+// BIG-ENDIAN
+uint16_t ambientRaw = (data[3] << 8) | data[4];
+float ambient_kpa = ambientRaw / 100.0;
 ```
 
 **Example:**
 ```
 Request:  02|21|23|46
-Response: 06|61|23|27|0F|27|10|F7
-                    ^^^^^ ^^^^^
-                    Little-endian: 0x0F27 = 3879 → 1.94V
-                                   0x1027 = 4135 → 2.07V
-                    Track 1 + Track 2 = 4.01V ≈ 5V supply ✓
+Response: 06|61|23|26|DB|...
+                    ^^^^^
+                    0x26DB = 9947 → 99.47 kPa
 ```
 
 **Validation:**
-- Track voltages should sum to approximately 5V (supply voltage)
+- Nanocom ambient/barometric pressure ≈ 99.5 kPa → Decoded: 99.47 kPa ✓
 
 
-### PID 0x40: Cylinder Fuel Trim (12 bytes)
+### PID 0x40: Per-Cylinder Injector Fuel Trim (12 bytes)
 
 
 ```
 Response: 0C|61|40|[CYL1]|[CYL2]|[CYL3]|[CYL4]|[CYL5]|CHK
                    ^^^^^^ ^^^^^^ ^^^^^^ ^^^^^^ ^^^^^^
-                   Signed 16-bit big-endian trim values
+                   5 × signed 16-bit big-endian per-cylinder injector fuel-trim values
 ```
 
 **Example:**
@@ -545,10 +512,10 @@ Response: 01|7E|7F
 
 **Page 2 (Advanced):**
 1. 0x09, 0x0D, 0x1A (as above)
-2. 0x1B (Fuel/Air composite)
-3. 0x1C, 0x21 (Temps, Digital inputs)
-4. 0x40 (Cylinder trim)
-5. 0x23 (Accelerator tracks)
+2. 0x1B (Accelerator tracks)
+3. 0x1C, 0x21 (Temps; 0x21 = NOT switches, function uncertain — switches are on 0x1E)
+4. 0x40 (Per-cylinder injector fuel trim)
+5. 0x23 (Ambient pressure)
 6. 0x37, 0x38 (EGR, Wastegate)
 
 Keep-alive is interspersed approximately every 10-15 data requests.

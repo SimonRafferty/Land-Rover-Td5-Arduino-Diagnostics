@@ -85,6 +85,21 @@ inline void updateAmbientPressure(float value) {
 inline void updateEGR(float value) { egrPosition = (uint16_t)(value * 100); }
 inline void updateWastegate(float value) { wastegatePosition = (uint16_t)(value * 100); }
 
+// ----------------------------------------------------------------------------
+// CORRECTION (2026-09, confirmed on-vehicle vs Nanocom):
+// PID 0x21 is NOT the switch bitfield. On the vehicle it returns small
+// idle-error-like values (0x0000-0x0009, sometimes 0xFFFF) unrelated to driver
+// inputs; its function is uncertain. The real driver-input switches are on
+// PID 0x1E, response 04|61|1E|DB1|DB2|CHK (DB1=data[3], DB2=data[4]),
+// normally-open / active-low (0 = pressed/active):
+//   DB1: bit0=Brake 2, bit1=Clutch (0=pressed, CONFIRMED), bit2=Cruise master,
+//        bit3=Cruise Set/Accel, bit4=Cruise Resume
+//   DB2: bit2=A/C fan req, bit3=A/C clutch req,
+//        bit6=Transfer box (1=LOW range, 0=HIGH), bit7=Brake main (0=pressed, CONFIRMED)
+// There is NO handbrake bit - the Td5 ECU does not receive the handbrake signal.
+// This legacy handler (below) decodes the OLD 0x21 interpretation and is kept
+// as-is for compatibility; it should not be treated as a valid switch source.
+// ----------------------------------------------------------------------------
 // Digital inputs - special handler (takes float to match updateFunc signature)
 inline void updateDigitalInputs(float value) {
   uint16_t raw = (uint16_t)value;  // Cast from float to uint16_t
@@ -119,7 +134,7 @@ const TD5Parameter TD5_PARAMS[] = {
   {0x09, "RPM",                 5,   true,  scaleNone,           updateRPM,         0x01}, // FUELLING
   {0x0D, "Speed",               4,   false, scaleNone,           updateSpeed,       0x01}, // FUELLING
   {0x20, "Injection",           5,   true,  scaleFuelQuantity,   updateInjection,   0x01}, // FUELLING
-  {0x21, "Digital Inputs",      5,   true,  scaleNone,           updateDigitalInputs, 0x02}, // INPUTS
+  {0x21, "Digital Inputs",      5,   true,  scaleNone,           updateDigitalInputs, 0x02}, // INPUTS -- NOTE(2026-09): 0x21 is NOT valid switch data; real switches are on PID 0x1E (see updateDigitalInputs)
   {0x0B, "Fuel Temperature",    5,   true,  scaleTempKelvin,     updateFuelTemp,    0x03}, // TEMPERATURES
   {0x17, "Battery Voltage",     5,   true,  scaleVoltage,        updateBatteryVoltage, 0x03}, // TEMPERATURES
   {0x0A, "MAP",                 5,   true,  scalePressurePa,     updateMAP,         0x04}, // PRESSURES

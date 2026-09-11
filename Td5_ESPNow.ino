@@ -23,6 +23,29 @@
  * processing logic for adaptive cruise control, data logging, etc.
  */
 
+/*
+ * ============================================================================
+ * PID MAP CORRECTION (2026-09, confirmed on-vehicle vs Nanocom)
+ * ============================================================================
+ * The corrected, ground-truth Td5 PID map is:
+ *   - PID 0x1B = ACCELERATOR PEDAL TRACKS (big-endian, raw/1000 = volts;
+ *                Track 1-4 + 5 V supply). NOT airflow/ambient pressure.
+ *   - PID 0x23 = AMBIENT / BAROMETRIC PRESSURE (big-endian, raw/100 = kPa).
+ *                NOT little-endian accelerator tracks.
+ *   - The input SWITCHES are on PID 0x1E (not 0x21). PID 0x21 returns small
+ *     idle-error-like values; its function is uncertain.
+ *   - PID 0x40 = per-cylinder INJECTOR fuel trim (5 x signed int16, big-endian).
+ *   - There is NO handbrake signal from the ECU.
+ *   - ALL decoded Td5 PIDs are BIG-ENDIAN (no PID is little-endian).
+ *   - The genuine MAF/airflow PID is currently UNKNOWN.
+ *
+ * NOTE: The in-file decode below for 0x1B and 0x23 still uses the OLD
+ * interpretation (0x1B as airflow/ambient, 0x23 as little-endian tracks).
+ * It is left unchanged for behavioural compatibility; treat the decoded
+ * values accordingly. See TD5_PROTOCOL_REFERENCE.md for the corrected decode.
+ * ============================================================================
+ */
+
 #include <SoftwareSerial.h>
 #include <esp_now.h>
 #include <WiFi.h>
@@ -1538,6 +1561,10 @@ void processECUResponse(uint8_t* data, int length) {
           return;  // Composite handled, exit
 
         case 0x1B:  // Composite Fuel/Air (12 bytes expected)
+          // NOTE (2026-09): PID 0x1B is actually the ACCELERATOR PEDAL TRACKS
+          // (big-endian, raw/1000 = volts), NOT airflow/ambient. The decode
+          // below is the OLD interpretation, kept for compatibility - do not
+          // trust these values as airflow/ambient. See file-top correction block.
           if (length >= 7) {
             // Bytes 5-6: Airflow (g/s)
             uint16_t airflowRaw = (data[5] << 8) | data[6];
